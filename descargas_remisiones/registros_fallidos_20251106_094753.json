@@ -1,0 +1,26 @@
+{
+  "fecha_reporte": "2025-11-06T09:47:53.590506",
+  "total_fallidos": 4,
+  "registros": [
+    {
+      "posicion": 128,
+      "correlativo": "FA2B976C-B172-FD5B-B501-1C4FDAD08D93",
+      "fecha": "2025-11-06T09:43:29.842624"
+    },
+    {
+      "posicion": 129,
+      "correlativo": "01F875FA-4B01-C85B-BD1C-24CD8B544303",
+      "fecha": "2025-11-06T09:44:57.761976"
+    },
+    {
+      "posicion": 130,
+      "correlativo": "ED050EEA-A841-5252-8B39-8DB9579FE90B",
+      "fecha": "2025-11-06T09:46:25.560328"
+    },
+    {
+      "posicion": 131,
+      "correlativo": "203A38A7-65D7-6F5D-BD65-DE895EDFD8C0",
+      "fecha": "2025-11-06T09:47:53.585798"
+    }
+  ]
+}

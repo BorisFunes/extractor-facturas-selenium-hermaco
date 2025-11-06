@@ -12,10 +12,18 @@ import glob
 import json
 from pathlib import Path
 from datetime import datetime
+import shutil
 
-# Configuración de la carpeta de descargas
+# Configuración de carpetas
 DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_erp")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
+
+# Crear carpeta de backup con fecha actual
+fecha_backup = datetime.now().strftime("%Y%m%d_%H%M%S")
+BACKUP_FOLDER = os.path.join(os.getcwd(), f"backup_{fecha_backup}")
+os.makedirs(BACKUP_FOLDER, exist_ok=True)
+
+print(f"📁 Carpeta de backup creada: {BACKUP_FOLDER}")
 
 # Configuración de Chrome para descargas automáticas
 chrome_options = webdriver.ChromeOptions()
@@ -35,34 +43,70 @@ driver = webdriver.Chrome(
 
 # Listas para tracking
 registros_fallidos = []
+facturas_anuladas = []
 ultimo_dte_exitoso = None
 pagina_ultimo_dte_exitoso = None
+
+
+def guardar_backup_ultimo_exitoso():
+    """Guarda una copia del último DTE exitoso en la carpeta de backup"""
+    if ultimo_dte_exitoso:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archivo_backup = os.path.join(
+            BACKUP_FOLDER, f"ultimo_dte_exitoso_{timestamp}.json"
+        )
+
+        with open(archivo_backup, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "fecha_reporte": datetime.now().isoformat(),
+                    "ultimo_dte": ultimo_dte_exitoso,
+                    "pagina": pagina_ultimo_dte_exitoso,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"💾 Backup guardado: {archivo_backup}")
 
 
 def contar_archivos_iniciales():
     """Cuenta los archivos PDF y JSON que ya existen en la carpeta de descargas"""
     pdfs = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))
-    jsons_facturas = len([f for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json")) 
-                          if not ("registros_fallidos" in f or "ultimo_dte_exitoso" in f)])
+    jsons_facturas = len(
+        [
+            f
+            for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
+            if not (
+                "registros_fallidos" in f
+                or "ultimo_dte_exitoso" in f
+                or "facturas_anuladas" in f
+            )
+        ]
+    )
     return pdfs, jsons_facturas
 
 
 def leer_ultimo_dte_exitoso():
     """Lee el último DTE exitoso del archivo JSON más reciente"""
     try:
-        archivos_ultimo_dte = glob.glob(os.path.join(DOWNLOAD_FOLDER, "ultimo_dte_exitoso_*.json"))
+        archivos_ultimo_dte = glob.glob(
+            os.path.join(DOWNLOAD_FOLDER, "ultimo_dte_exitoso_*.json")
+        )
         if not archivos_ultimo_dte:
-            print("ℹ️ No se encontró archivo de último DTE exitoso. Se procesarán todas las páginas.")
+            print(
+                "ℹ️ No se encontró archivo de último DTE exitoso. Se procesarán todas las páginas."
+            )
             return None, None
-        
+
         # Obtener el archivo más reciente
         archivo_mas_reciente = max(archivos_ultimo_dte, key=os.path.getmtime)
-        
-        with open(archivo_mas_reciente, 'r', encoding='utf-8') as f:
+
+        with open(archivo_mas_reciente, "r", encoding="utf-8") as f:
             data = json.load(f)
-            ultimo_dte = data.get('ultimo_dte')
-            pagina = data.get('pagina', None)
-            
+            ultimo_dte = data.get("ultimo_dte")
+            pagina = data.get("pagina", None)
+
             if ultimo_dte:
                 print(f"✅ Último DTE exitoso encontrado: {ultimo_dte}")
                 if pagina:
@@ -71,7 +115,7 @@ def leer_ultimo_dte_exitoso():
             else:
                 print("⚠️ Archivo de último DTE exitoso vacío.")
                 return None, None
-                
+
     except Exception as e:
         print(f"⚠️ Error al leer último DTE exitoso: {e}")
         return None, None
@@ -86,19 +130,34 @@ def buscar_dte_en_pagina(driver, dte_buscado):
         filas = driver.find_elements(
             By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
         )
-        
+
         for idx, fila in enumerate(filas):
             dte_actual = extraer_dte_de_fila(fila)
             if dte_actual == dte_buscado:
                 print(f"  ✅ DTE encontrado en la fila {idx + 1}")
                 return idx
-        
+
         print(f"  ℹ️ DTE {dte_buscado} no encontrado en esta página")
         return None
-        
+
     except Exception as e:
         print(f"  ⚠️ Error al buscar DTE en página: {e}")
         return None
+
+
+def verificar_factura_anulada(driver, fila):
+    """
+    Verifica si una factura está anulada buscando el texto 'anulada' en la fila
+    """
+    try:
+        texto_fila = fila.text.lower()
+        if "anulada" in texto_fila or "anulado" in texto_fila:
+            print("  ⚠️ FACTURA ANULADA detectada")
+            return True
+        return False
+    except Exception as e:
+        print(f"  ⚠️ Error al verificar si está anulada: {e}")
+        return False
 
 
 def cerrar_dropdowns_abiertos(driver):
@@ -304,7 +363,8 @@ def procesar_registro_con_reintentos(
     driver, fila, idx, ventana_principal, wait, pagina_actual=None, max_reintentos=3
 ):
     """
-    Procesa un registro con sistema de reintentos (3 intentos con pausa en el último)
+    Procesa un registro con sistema de reintentos (3 intentos con pausa en el último).
+    Si no encuentra el botón de impresión después de 3 intentos, verifica si está anulada.
     """
     global ultimo_dte_exitoso
     global pagina_ultimo_dte_exitoso
@@ -373,10 +433,42 @@ def procesar_registro_con_reintentos(
                 time.sleep(0.3)
             except Exception as e:
                 print(f"  ❌ No se pudo hacer click en 'Impresión': {e}")
-                if intento < max_reintentos:
-                    continue
-                else:
+
+                # Si es el último intento y no se encontró el botón, verificar si está anulada
+                if intento == max_reintentos:
+                    print("  🔍 Verificando si la factura está anulada...")
+
+                    # Cerrar el dropdown
+                    cerrar_dropdowns_abiertos(driver)
+                    time.sleep(0.3)
+
+                    # Re-obtener la fila
+                    filas = driver.find_elements(
+                        By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
+                    )
+                    if idx < len(filas):
+                        fila = filas[idx]
+
+                        if verificar_factura_anulada(driver, fila):
+                            # Marcar como anulada
+                            facturas_anuladas.append(
+                                {
+                                    "posicion": idx + 1,
+                                    "pagina": pagina_actual,
+                                    "dte": dte if dte else f"registro_{idx + 1}",
+                                    "fecha": datetime.now().isoformat(),
+                                    "motivo": "Factura anulada - Sin botón de impresión",
+                                }
+                            )
+                            print(
+                                f"  📝 Factura marcada como ANULADA y guardada en registro"
+                            )
+                            return False
+
+                    # Si no está anulada, se marca como fallida
                     raise
+                else:
+                    continue
 
             # Cambiar a la nueva ventana y descargar
             if cambiar_a_nueva_ventana(driver, ventana_principal):
@@ -386,6 +478,10 @@ def procesar_registro_con_reintentos(
                     print("  ✅ Descargas iniciadas correctamente")
                     ultimo_dte_exitoso = dte if dte else f"registro_{idx + 1}"
                     pagina_ultimo_dte_exitoso = pagina_actual
+
+                    # Guardar backup inmediatamente
+                    guardar_backup_ultimo_exitoso()
+
                     driver.close()
                     driver.switch_to.window(ventana_principal)
                     return True
@@ -449,6 +545,24 @@ def guardar_reporte_json(pagina_actual=None):
             )
         print(f"\n📄 Reporte de fallidos guardado: {archivo_fallidos}")
 
+    # Guardar facturas anuladas
+    if facturas_anuladas:
+        archivo_anuladas = os.path.join(
+            DOWNLOAD_FOLDER, f"facturas_anuladas_{timestamp}.json"
+        )
+        with open(archivo_anuladas, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "fecha_reporte": datetime.now().isoformat(),
+                    "total_anuladas": len(facturas_anuladas),
+                    "facturas": facturas_anuladas,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"📄 Reporte de anuladas guardado: {archivo_anuladas}")
+
     # Guardar último DTE exitoso
     if ultimo_dte_exitoso:
         archivo_ultimo = os.path.join(
@@ -469,6 +583,9 @@ def guardar_reporte_json(pagina_actual=None):
         if pagina_actual:
             print(f"   📄 Página: {pagina_actual}")
 
+        # También guardar en backup
+        guardar_backup_ultimo_exitoso()
+
 
 try:
     # Contar archivos iniciales
@@ -477,11 +594,11 @@ try:
     print(f"   📄 PDFs existentes: {pdfs_iniciales}")
     print(f"   📄 JSONs existentes: {jsons_iniciales}")
     print(f"   📦 Total archivos iniciales: {pdfs_iniciales + jsons_iniciales}")
-    
+
     # Leer último DTE exitoso
     print("\n🔍 Buscando último DTE procesado...")
     ultimo_dte_procesado, pagina_ultimo_dte = leer_ultimo_dte_exitoso()
-    
+
     # Maximizar ventana
     driver.maximize_window()
     print("\n🚀 Iniciando navegador...")
@@ -598,7 +715,7 @@ try:
 
     numero_ultima_pagina = None
     pagina_inicio = None
-    
+
     try:
         # Buscar todos los botones de página y seleccionar el último número
         botones_pagina = driver.find_elements(
@@ -624,10 +741,12 @@ try:
             # Determinar página de inicio según si hay DTE previo
             if ultimo_dte_procesado and pagina_ultimo_dte:
                 # Si hay un DTE previo, navegar a esa página
-                print(f"\n🔍 Buscando página {pagina_ultimo_dte} del último DTE procesado...")
+                print(
+                    f"\n🔍 Buscando página {pagina_ultimo_dte} del último DTE procesado..."
+                )
                 scroll_to_bottom(driver)
                 time.sleep(1)
-                
+
                 # Obtener página actual
                 try:
                     pagina_activa = driver.find_element(
@@ -637,20 +756,20 @@ try:
                     pagina_actual_num = int(pagina_activa.text.strip())
                 except:
                     pagina_actual_num = int(numero_ultima_pagina)
-                
+
                 pagina_objetivo = int(pagina_ultimo_dte)
                 clicks_necesarios = pagina_actual_num - pagina_objetivo
-                
+
                 print(f"   📄 Página actual: {pagina_actual_num}")
                 print(f"   🎯 Página objetivo: {pagina_objetivo}")
-                print(f"   � Clicks necesarios en 'Anterior': {clicks_necesarios}")
-                
+                print(f"   ⬅️ Clicks necesarios en 'Anterior': {clicks_necesarios}")
+
                 # Navegar hacia atrás hasta la página del último DTE
                 for i in range(clicks_necesarios):
                     try:
                         scroll_to_bottom(driver)
                         time.sleep(0.5)
-                        
+
                         # Verificar si el botón está visible en el paginador
                         try:
                             boton_directo = driver.find_element(
@@ -658,7 +777,8 @@ try:
                                 f"//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button')]//a[normalize-space(text())='{pagina_objetivo}']",
                             )
                             driver.execute_script(
-                                "arguments[0].scrollIntoView({block: 'center'});", boton_directo
+                                "arguments[0].scrollIntoView({block: 'center'});",
+                                boton_directo,
                             )
                             time.sleep(0.3)
                             boton_directo.click()
@@ -677,7 +797,7 @@ try:
                             )
                             time.sleep(0.3)
                             boton_anterior.click()
-                            
+
                             # Obtener nueva página actual
                             time.sleep(1.5)
                             try:
@@ -686,26 +806,36 @@ try:
                                     "//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
                                 )
                                 nueva_pagina = pagina_activa.text.strip()
-                                print(f"✅ Click en 'Anterior' - Ahora en página {nueva_pagina}")
-                                
+                                print(
+                                    f"✅ Click en 'Anterior' - Ahora en página {nueva_pagina}"
+                                )
+
                                 if int(nueva_pagina) == pagina_objetivo:
-                                    print(f"🎯 Llegamos a la página objetivo {pagina_objetivo}")
+                                    print(
+                                        f"🎯 Llegamos a la página objetivo {pagina_objetivo}"
+                                    )
                                     break
                             except:
-                                print(f"✅ Click en 'Anterior' ({i+1}/{clicks_necesarios})")
-                                
+                                print(
+                                    f"✅ Click en 'Anterior' ({i+1}/{clicks_necesarios})"
+                                )
+
                     except Exception as e2:
                         print(f"❌ Error al navegar: {e2}")
                         break
-                
+
                 # Buscar el DTE en la página actual
-                print(f"\n🔍 Buscando DTE {ultimo_dte_procesado} en la página actual...")
+                print(
+                    f"\n🔍 Buscando DTE {ultimo_dte_procesado} en la página actual..."
+                )
                 time.sleep(2)
                 indice_dte = buscar_dte_en_pagina(driver, ultimo_dte_procesado)
-                
+
                 if indice_dte is not None:
                     print(f"✅ DTE encontrado en la fila {indice_dte + 1}")
-                    print(f"   ⏭️ Se continuará desde el siguiente registro (fila {indice_dte + 2})")
+                    print(
+                        f"   ⏭️ Se continuará desde el siguiente registro (fila {indice_dte + 2})"
+                    )
                     pagina_inicio = pagina_objetivo
                 else:
                     print(f"⚠️ DTE no encontrado en página {pagina_objetivo}")
@@ -713,19 +843,24 @@ try:
                     pagina_inicio = pagina_objetivo
             else:
                 # Si no hay DTE previo, ir a página 35 (penúltima - 1)
-                print("\n🔄 No hay DTE previo. Navegando a la página penúltima menos 1...")
+                print(
+                    "\n🔄 No hay DTE previo. Navegando a la página penúltima menos 1..."
+                )
                 scroll_to_bottom(driver)
                 time.sleep(1)
 
                 try:
-                    numero_pagina_objetivo = int(numero_ultima_pagina) - 2  # 37 - 2 = 35
+                    numero_pagina_objetivo = (
+                        int(numero_ultima_pagina) - 2
+                    )  # 37 - 2 = 35
                     boton_pagina_35 = driver.find_element(
                         By.XPATH,
                         f"//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button')]//a[@data-dt-idx and normalize-space(text())='{numero_pagina_objetivo}']",
                     )
 
                     driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center'});", boton_pagina_35
+                        "arguments[0].scrollIntoView({block: 'center'});",
+                        boton_pagina_35,
                     )
                     time.sleep(0.5)
                     boton_pagina_35.click()
@@ -736,7 +871,9 @@ try:
                     pagina_inicio = numero_pagina_objetivo
 
                 except Exception as e:
-                    print(f"⚠️ No se pudo navegar a la página {numero_pagina_objetivo}: {e}")
+                    print(
+                        f"⚠️ No se pudo navegar a la página {numero_pagina_objetivo}: {e}"
+                    )
                     print("   Usando botón 'Anterior' dos veces como alternativa...")
 
                     # Alternativa: usar botón "Anterior" dos veces
@@ -811,10 +948,14 @@ try:
             indice_dte = buscar_dte_en_pagina(driver, ultimo_dte_procesado)
             if indice_dte is not None:
                 indice_inicio = indice_dte + 1  # Continuar desde el siguiente
-                print(f"⏭️ Continuando desde el registro {indice_inicio + 1} (después del DTE previo)")
+                print(
+                    f"⏭️ Continuando desde el registro {indice_inicio + 1} (después del DTE previo)"
+                )
             else:
                 indice_inicio = 0
-                print(f"ℹ️ DTE previo no encontrado en esta página, procesando todos los registros")
+                print(
+                    f"ℹ️ DTE previo no encontrado en esta página, procesando todos los registros"
+                )
             primera_pagina = False
         else:
             indice_inicio = 0
@@ -840,20 +981,36 @@ try:
 
                 # Procesar con sistema de reintentos
                 exito = procesar_registro_con_reintentos(
-                    driver, fila, idx, ventana_principal, wait, pagina_actual, max_reintentos=3
+                    driver,
+                    fila,
+                    idx,
+                    ventana_principal,
+                    wait,
+                    pagina_actual,
+                    max_reintentos=3,
                 )
 
                 if not exito:
                     dte = extraer_dte_de_fila(fila)
-                    registros_fallidos.append(
-                        {
-                            "posicion": idx + 1,
-                            "pagina": pagina_actual,
-                            "dte": dte if dte else f"registro_{idx + 1}",
-                            "fecha": datetime.now().isoformat(),
-                        }
+
+                    # Verificar si no fue marcada como anulada
+                    ya_marcada_anulada = any(
+                        f.get("dte") == (dte if dte else f"registro_{idx + 1}")
+                        for f in facturas_anuladas
                     )
-                    print(f"  ❌ Registro marcado como fallido después de 3 intentos")
+
+                    if not ya_marcada_anulada:
+                        registros_fallidos.append(
+                            {
+                                "posicion": idx + 1,
+                                "pagina": pagina_actual,
+                                "dte": dte if dte else f"registro_{idx + 1}",
+                                "fecha": datetime.now().isoformat(),
+                            }
+                        )
+                        print(
+                            f"  ❌ Registro marcado como fallido después de 3 intentos"
+                        )
 
             except Exception as e:
                 print(f"  ❌ Error crítico en registro {idx + 1}: {e}")
@@ -922,12 +1079,22 @@ try:
     print(f"{'='*60}")
     print(f"✅ Total de registros procesados: {registros_procesados_totales}")
     print(f"❌ Registros fallidos: {len(registros_fallidos)}")
-    
+    print(f"⚠️ Facturas anuladas: {len(facturas_anuladas)}")
+
     # Contar archivos finales
     pdfs_finales = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))
-    jsons_finales = len([f for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json")) 
-                         if not ("registros_fallidos" in f or "ultimo_dte_exitoso" in f)])
-    
+    jsons_finales = len(
+        [
+            f
+            for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
+            if not (
+                "registros_fallidos" in f
+                or "ultimo_dte_exitoso" in f
+                or "facturas_anuladas" in f
+            )
+        ]
+    )
+
     print(f"\n📊 RESUMEN DE ARCHIVOS:")
     print(f"   📄 PDFs iniciales: {pdfs_iniciales}")
     print(f"   📄 PDFs finales: {pdfs_finales}")
@@ -938,9 +1105,12 @@ try:
     print(f"   ✨ JSONs nuevos descargados: {jsons_finales - jsons_iniciales}")
     print(f"")
     print(f"   📦 Total archivos iniciales: {pdfs_iniciales + jsons_iniciales}")
-    print(f"   � Total archivos finales: {pdfs_finales + jsons_finales}")
-    print(f"   🎁 Total archivos nuevos: {(pdfs_finales - pdfs_iniciales) + (jsons_finales - jsons_iniciales)}")
+    print(f"   📦 Total archivos finales: {pdfs_finales + jsons_finales}")
+    print(
+        f"   🎁 Total archivos nuevos: {(pdfs_finales - pdfs_iniciales) + (jsons_finales - jsons_iniciales)}"
+    )
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
+    print(f"💾 Backup guardado en: {BACKUP_FOLDER}")
 
     # Guardar reportes JSON
     guardar_reporte_json(pagina_actual)
@@ -949,7 +1119,7 @@ try:
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
-    guardar_reporte_json(pagina_actual if 'pagina_actual' in locals() else None)
+    guardar_reporte_json(pagina_actual if "pagina_actual" in locals() else None)
     print("📊 Reportes guardados antes de salir")
 
 except Exception as e:
@@ -957,7 +1127,7 @@ except Exception as e:
     import traceback
 
     traceback.print_exc()
-    guardar_reporte_json(pagina_actual if 'pagina_actual' in locals() else None)
+    guardar_reporte_json(pagina_actual if "pagina_actual" in locals() else None)
 
 finally:
     driver.quit()

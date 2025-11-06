@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Configuración de la carpeta de descargas
-DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_erp")
+DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_gastos")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Configuración de Chrome para descargas automáticas
@@ -35,69 +35,79 @@ driver = webdriver.Chrome(
 
 # Listas para tracking
 registros_fallidos = []
-ultimo_dte_exitoso = None
-pagina_ultimo_dte_exitoso = None
+registros_ignorados = []
+ultimo_codigo_exitoso = None
+pagina_ultimo_codigo_exitoso = None
 
 
 def contar_archivos_iniciales():
     """Cuenta los archivos PDF y JSON que ya existen en la carpeta de descargas"""
     pdfs = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))
-    jsons_facturas = len([f for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json")) 
-                          if not ("registros_fallidos" in f or "ultimo_dte_exitoso" in f)])
-    return pdfs, jsons_facturas
+    jsons_gastos = len(
+        [
+            f
+            for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
+            if not ("registros_fallidos" in f or "ultimo_codigo_exitoso" in f)
+        ]
+    )
+    return pdfs, jsons_gastos
 
 
-def leer_ultimo_dte_exitoso():
-    """Lee el último DTE exitoso del archivo JSON más reciente"""
+def leer_ultimo_codigo_exitoso():
+    """Lee el último código exitoso del archivo JSON más reciente"""
     try:
-        archivos_ultimo_dte = glob.glob(os.path.join(DOWNLOAD_FOLDER, "ultimo_dte_exitoso_*.json"))
-        if not archivos_ultimo_dte:
-            print("ℹ️ No se encontró archivo de último DTE exitoso. Se procesarán todas las páginas.")
+        archivos_ultimo_codigo = glob.glob(
+            os.path.join(DOWNLOAD_FOLDER, "ultimo_codigo_exitoso_*.json")
+        )
+        if not archivos_ultimo_codigo:
+            print(
+                "ℹ️ No se encontró archivo de último código exitoso. Se procesarán todas las páginas."
+            )
             return None, None
-        
+
         # Obtener el archivo más reciente
-        archivo_mas_reciente = max(archivos_ultimo_dte, key=os.path.getmtime)
-        
-        with open(archivo_mas_reciente, 'r', encoding='utf-8') as f:
+        archivo_mas_reciente = max(archivos_ultimo_codigo, key=os.path.getmtime)
+
+        with open(archivo_mas_reciente, "r", encoding="utf-8") as f:
             data = json.load(f)
-            ultimo_dte = data.get('ultimo_dte')
-            pagina = data.get('pagina', None)
-            
-            if ultimo_dte:
-                print(f"✅ Último DTE exitoso encontrado: {ultimo_dte}")
+            ultimo_codigo = data.get("ultimo_codigo")
+            pagina = data.get("pagina", None)
+
+            if ultimo_codigo:
+                print(f"✅ Último código exitoso encontrado: {ultimo_codigo}")
                 if pagina:
                     print(f"   📄 Última página procesada: {pagina}")
-                return ultimo_dte, pagina
+                return ultimo_codigo, pagina
             else:
-                print("⚠️ Archivo de último DTE exitoso vacío.")
+                print("⚠️ Archivo de último código exitoso vacío.")
                 return None, None
-                
+
     except Exception as e:
-        print(f"⚠️ Error al leer último DTE exitoso: {e}")
+        print(f"⚠️ Error al leer último código exitoso: {e}")
         return None, None
 
 
-def buscar_dte_en_pagina(driver, dte_buscado):
+def buscar_codigo_en_pagina(driver, codigo_buscado):
     """
-    Busca un DTE específico en la página actual.
+    Busca un código de gasto específico en la página actual.
     Retorna el índice de la fila si lo encuentra, o None si no lo encuentra.
     """
     try:
         filas = driver.find_elements(
-            By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
+            By.XPATH, "//table[@id='expense_table']//tbody/tr[@role='row']"
         )
-        
+
         for idx, fila in enumerate(filas):
-            dte_actual = extraer_dte_de_fila(fila)
-            if dte_actual == dte_buscado:
-                print(f"  ✅ DTE encontrado en la fila {idx + 1}")
+            codigo_actual = extraer_codigo_de_fila(fila)
+            if codigo_actual == codigo_buscado:
+                print(f"  ✅ Código encontrado en la fila {idx + 1}")
                 return idx
-        
-        print(f"  ℹ️ DTE {dte_buscado} no encontrado en esta página")
+
+        print(f"  ℹ️ Código {codigo_buscado} no encontrado en esta página")
         return None
-        
+
     except Exception as e:
-        print(f"  ⚠️ Error al buscar DTE en página: {e}")
+        print(f"  ⚠️ Error al buscar código en página: {e}")
         return None
 
 
@@ -132,9 +142,9 @@ def scroll_to_bottom(driver):
     print("  ⬇️ Scroll hasta el final de la página")
 
 
-def click_impresion_de_fila(driver, fila, wait):
+def click_imprimir_dte_de_fila(driver, fila, wait):
     """
-    Hace click en 'Impresión' (por clase o por texto) SOLO dentro del dropdown visible de esta fila.
+    Hace click en 'Imprimir DTE' SOLO dentro del dropdown visible de esta fila.
     """
 
     def obtener_menu_visible(_):
@@ -146,11 +156,11 @@ def click_impresion_de_fila(driver, fila, wait):
 
     candidatos = menu.find_elements(
         By.XPATH,
-        ".//a[contains(concat(' ', normalize-space(@class), ' '), ' print-invoice ') "
-        " or contains(normalize-space(.), 'Impresión')]",
+        ".//a[contains(concat(' ', normalize-space(@class), ' '), ' print-dte-expense ') "
+        " or contains(normalize-space(.), 'Imprimir DTE')]",
     )
     if not candidatos:
-        raise Exception("No se encontró 'Impresión' en el menú de esta fila")
+        raise Exception("No se encontró 'Imprimir DTE' en el menú de esta fila")
 
     objetivo = next((c for c in candidatos if c.is_displayed()), candidatos[0])
     driver.execute_script("arguments[0].scrollIntoView({block:'nearest'});", objetivo)
@@ -201,35 +211,63 @@ def sanitize_filename(name: str) -> str:
     return cleaned
 
 
-def extraer_dte_de_fila(fila):
+def extraer_codigo_de_fila(fila):
     """
-    Busca en la fila una celda que contenga el texto del DTE (p.ej. 'DTE-03-S002P001-000000000000686')
+    Busca en la fila una celda que contenga el código del gasto (p.ej. 'AE6B49E7-62FA-505E-BFF0-2503F4C6E932')
     y lo retorna. Devuelve None si no lo encuentra.
     """
     try:
+        # Buscar en la celda que contiene el código (normalmente la 5ta columna)
         celda = fila.find_element(
-            By.XPATH, ".//td[contains(normalize-space(.), 'DTE-')]"
+            By.XPATH,
+            ".//td[@class='clickable_td']//span[@class='text-primary']//strong",
         )
-        dte = celda.text.strip()
-        if dte and "DTE-" in dte:
-            return dte
+        codigo = celda.text.strip()
+        if codigo:
+            return codigo
     except Exception:
         pass
     return None
 
 
+def verificar_estado_pago(fila):
+    """
+    Verifica el estado de pago de un gasto.
+    Retorna True si está "Pagado", False si está "Debido" o cualquier otro estado.
+    """
+    try:
+        # Buscar el elemento que contiene el estado de pago
+        estado_element = fila.find_element(
+            By.XPATH,
+            ".//td//a[contains(@class, 'payment-status')]//span[contains(@class, 'label')]",
+        )
+        estado_texto = estado_element.text.strip()
+
+        if estado_texto == "Pagado":
+            print(f"  ✅ Estado de pago: {estado_texto}")
+            return True
+        else:
+            print(f"  ⏭️ Estado de pago: {estado_texto} - Registro ignorado")
+            return False
+
+    except Exception as e:
+        print(f"  ⚠️ No se pudo verificar el estado de pago: {e}")
+        # Si no se puede verificar, asumir que no está pagado por seguridad
+        return False
+
+
 def descargar_pdf_y_json(
-    driver, wait, carpeta_descargas, nombre_base, numero_factura=None
+    driver, wait, carpeta_descargas, nombre_base, numero_gasto=None
 ):
     """
-    Descarga PDF y JSON de la ventana actual y los renombra con 'nombre_base' (el DTE).
-    Si no se pasa nombre_base, intenta usar el ID de la URL; si falla, usa 'factura_{numero_factura}'.
+    Descarga PDF y JSON de la ventana actual y los renombra con 'nombre_base' (el código).
+    Si no se pasa nombre_base, intenta usar el ID de la URL; si falla, usa 'gasto_{numero_gasto}'.
     """
     descargas_exitosas = 0
-    factura_id = None
+    gasto_id = None
 
     try:
-        # Intentar obtener ID de la URL del PDF (fallback si no hay DTE)
+        # Intentar obtener ID de la URL del PDF (fallback si no hay código)
         try:
             boton_pdf = wait.until(
                 EC.presence_of_element_located(
@@ -240,18 +278,18 @@ def descargar_pdf_y_json(
                 )
             )
             url_pdf = boton_pdf.get_attribute("href")
-            factura_id = (
+            gasto_id = (
                 url_pdf.split("/pdf/")[-1] if url_pdf and "/pdf/" in url_pdf else None
             )
-            if factura_id:
-                print(f"  📋 ID de factura detectado: {factura_id}")
+            if gasto_id:
+                print(f"  📋 ID de gasto detectado: {gasto_id}")
         except Exception as e:
-            print(f"  ⚠️ No se pudo obtener el ID de la factura: {e}")
+            print(f"  ⚠️ No se pudo obtener el ID del gasto: {e}")
 
         base = (
             sanitize_filename(nombre_base)
             if nombre_base
-            else (factura_id or f"factura_{numero_factura}")
+            else (gasto_id or f"gasto_{numero_gasto}")
         )
 
         # Descargar PDF
@@ -306,15 +344,20 @@ def procesar_registro_con_reintentos(
     """
     Procesa un registro con sistema de reintentos (3 intentos con pausa en el último)
     """
-    global ultimo_dte_exitoso
-    global pagina_ultimo_dte_exitoso
+    global ultimo_codigo_exitoso
+    global pagina_ultimo_codigo_exitoso
 
-    dte = extraer_dte_de_fila(fila)
-    if dte:
-        print(f"  🏷️ DTE detectado: {dte}")
+    # Verificar primero el estado de pago
+    if not verificar_estado_pago(fila):
+        print(f"  ⏭️ Registro ignorado por estado de pago")
+        return "ignorado"  # Retornar un valor especial para indicar que fue ignorado
+
+    codigo = extraer_codigo_de_fila(fila)
+    if codigo:
+        print(f"  🏷️ Código detectado: {codigo}")
     else:
         print(
-            "  ⚠️ No se pudo detectar DTE en la fila. Se usará ID/índice como fallback."
+            "  ⚠️ No se pudo detectar código en la fila. Se usará ID/índice como fallback."
         )
 
     for intento in range(1, max_reintentos + 1):
@@ -329,7 +372,7 @@ def procesar_registro_con_reintentos(
             # Re-obtener la fila para evitar stale elements
             driver.switch_to.window(ventana_principal)
             filas = driver.find_elements(
-                By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
+                By.XPATH, "//table[@id='expense_table']//tbody/tr[@role='row']"
             )
             if idx >= len(filas):
                 print("  ⚠️ La fila ya no está disponible.")
@@ -342,13 +385,16 @@ def procesar_registro_con_reintentos(
             )
             time.sleep(0.3)
 
-            # Re-extraer DTE por si acaso
-            if not dte:
-                dte = extraer_dte_de_fila(fila)
+            # Re-extraer código por si acaso
+            if not codigo:
+                codigo = extraer_codigo_de_fila(fila)
 
             # Click en "Acciones"
             try:
-                boton_acciones = fila.find_element(By.CLASS_NAME, "btn-actions")
+                boton_acciones = fila.find_element(
+                    By.XPATH,
+                    ".//button[contains(@class, 'dropdown-toggle') and contains(text(), 'Acciones')]",
+                )
                 driver.execute_script(
                     "arguments[0].scrollIntoView({block: 'center'});", boton_acciones
                 )
@@ -366,13 +412,13 @@ def procesar_registro_con_reintentos(
                 else:
                     raise
 
-            # Click en "Impresión"
+            # Click en "Imprimir DTE"
             try:
-                click_impresion_de_fila(driver, fila, wait)
-                print("  ✅ Click en 'Impresión' - Se abre nueva ventana")
+                click_imprimir_dte_de_fila(driver, fila, wait)
+                print("  ✅ Click en 'Imprimir DTE' - Se abre nueva ventana")
                 time.sleep(0.3)
             except Exception as e:
-                print(f"  ❌ No se pudo hacer click en 'Impresión': {e}")
+                print(f"  ❌ No se pudo hacer click en 'Imprimir DTE': {e}")
                 if intento < max_reintentos:
                     continue
                 else:
@@ -382,10 +428,10 @@ def procesar_registro_con_reintentos(
             if cambiar_a_nueva_ventana(driver, ventana_principal):
                 time.sleep(0.5)
 
-                if descargar_pdf_y_json(driver, wait, DOWNLOAD_FOLDER, dte, idx + 1):
+                if descargar_pdf_y_json(driver, wait, DOWNLOAD_FOLDER, codigo, idx + 1):
                     print("  ✅ Descargas iniciadas correctamente")
-                    ultimo_dte_exitoso = dte if dte else f"registro_{idx + 1}"
-                    pagina_ultimo_dte_exitoso = pagina_actual
+                    ultimo_codigo_exitoso = codigo if codigo else f"registro_{idx + 1}"
+                    pagina_ultimo_codigo_exitoso = pagina_actual
                     driver.close()
                     driver.switch_to.window(ventana_principal)
                     return True
@@ -449,23 +495,41 @@ def guardar_reporte_json(pagina_actual=None):
             )
         print(f"\n📄 Reporte de fallidos guardado: {archivo_fallidos}")
 
-    # Guardar último DTE exitoso
-    if ultimo_dte_exitoso:
+    # Guardar registros ignorados
+    if registros_ignorados:
+        archivo_ignorados = os.path.join(
+            DOWNLOAD_FOLDER, f"registros_ignorados_{timestamp}.json"
+        )
+        with open(archivo_ignorados, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "fecha_reporte": datetime.now().isoformat(),
+                    "total_ignorados": len(registros_ignorados),
+                    "registros": registros_ignorados,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"📄 Reporte de ignorados guardado: {archivo_ignorados}")
+
+    # Guardar último código exitoso
+    if ultimo_codigo_exitoso:
         archivo_ultimo = os.path.join(
-            DOWNLOAD_FOLDER, f"ultimo_dte_exitoso_{timestamp}.json"
+            DOWNLOAD_FOLDER, f"ultimo_codigo_exitoso_{timestamp}.json"
         )
         with open(archivo_ultimo, "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "fecha_reporte": datetime.now().isoformat(),
-                    "ultimo_dte": ultimo_dte_exitoso,
+                    "ultimo_codigo": ultimo_codigo_exitoso,
                     "pagina": pagina_actual,
                 },
                 f,
                 indent=2,
                 ensure_ascii=False,
             )
-        print(f"📄 Último DTE exitoso guardado: {archivo_ultimo}")
+        print(f"📄 Último código exitoso guardado: {archivo_ultimo}")
         if pagina_actual:
             print(f"   📄 Página: {pagina_actual}")
 
@@ -477,11 +541,11 @@ try:
     print(f"   📄 PDFs existentes: {pdfs_iniciales}")
     print(f"   📄 JSONs existentes: {jsons_iniciales}")
     print(f"   📦 Total archivos iniciales: {pdfs_iniciales + jsons_iniciales}")
-    
-    # Leer último DTE exitoso
-    print("\n🔍 Buscando último DTE procesado...")
-    ultimo_dte_procesado, pagina_ultimo_dte = leer_ultimo_dte_exitoso()
-    
+
+    # Leer último código exitoso
+    print("\n🔍 Buscando último código procesado...")
+    ultimo_codigo_procesado, pagina_ultimo_codigo = leer_ultimo_codigo_exitoso()
+
     # Maximizar ventana
     driver.maximize_window()
     print("\n🚀 Iniciando navegador...")
@@ -525,31 +589,50 @@ try:
     time.sleep(3)
     print("✅ Login completado, esperando dashboard...")
 
-    # Navegar a Gestión de ventas
-    print("\n🔄 Navegando a 'Gestión de ventas'...")
-    gestion_ventas = wait.until(EC.element_to_be_clickable((By.ID, "tour_step7_menu")))
-    gestion_ventas.click()
-    print("✅ Click en 'Gestión de ventas' (desplegable abierto)")
+    # Navegar a Gastos
+    print("\n🔄 Navegando a 'Gastos'...")
+    try:
+        # Buscar el elemento li con clase treeview que contiene "Gastos"
+        gastos_menu = wait.until(
+            EC.element_to_be_clickable(
+                (
+                    By.XPATH,
+                    "//li[contains(@class, 'treeview')]//a[contains(., 'Gastos')]",
+                )
+            )
+        )
+        gastos_menu.click()
+        print("✅ Click en 'Gastos' (desplegable abierto)")
+    except Exception as e:
+        print(f"⚠️ Error al buscar menú Gastos: {e}")
+        print("   Intentando método alternativo...")
+        # Intentar con un XPath más específico
+        gastos_menu = wait.until(
+            EC.element_to_be_clickable((By.XPATH, "//span[text()='Gastos']/parent::a"))
+        )
+        gastos_menu.click()
+        print("✅ Click en 'Gastos' (desplegable abierto)")
 
     time.sleep(1)
 
-    # Click en "Todas las ventas"
-    todas_ventas = wait.until(
+    # Click en "Lista de gastos"
+    print("\n🔄 Navegando a 'Lista de gastos'...")
+    lista_gastos = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, "//a[@href='https://hermaco.findexbusiness.com/sells']")
+            (By.XPATH, "//a[@href='https://hermaco.findexbusiness.com/expenses']")
         )
     )
-    todas_ventas.click()
-    print("✅ Click en 'Todas las ventas'")
+    lista_gastos.click()
+    print("✅ Click en 'Lista de gastos'")
 
     time.sleep(2)
-    print("📍 Estamos en la página de facturas")
+    print("📍 Estamos en la página de gastos")
 
     # Filtro de fecha
     print("\n🔄 Abriendo filtro de fecha...")
-    filtro_fecha = wait.until(EC.element_to_be_clickable((By.ID, "sell_date_filter")))
+    filtro_fecha = wait.until(EC.element_to_be_clickable((By.ID, "expense_date_range")))
     filtro_fecha.click()
-    print("✅ Click en 'Filtrar por fecha' (desplegable abierto)")
+    print("✅ Click en 'Rango de fechas' (desplegable abierto)")
 
     time.sleep(2)
     try:
@@ -568,14 +651,14 @@ try:
 
     time.sleep(3)
 
-    # Mostrar 100 registros por página
-    print("\n🔄 Cambiando filtro a 100 registros por página...")
+    # Mostrar 1000 registros por página
+    print("\n🔄 Cambiando filtro a 1000 registros por página...")
     select_length = wait.until(
-        EC.presence_of_element_located((By.NAME, "sell_table_length"))
+        EC.presence_of_element_located((By.NAME, "expense_table_length"))
     )
     try:
-        Select(select_length).select_by_value("100")
-        print("✅ Seleccionado 100 registros por página")
+        Select(select_length).select_by_value("1000")
+        print("✅ Seleccionado 1000 registros por página")
     except Exception as e:
         print(f"  ❌ No se pudo cambiar el tamaño de página: {e}")
         driver.quit()
@@ -586,24 +669,19 @@ try:
     time.sleep(5)
     print("✅ Registros cargados")
 
-    # Dar tiempo a que carguen los registros
-    print("⏳ Esperando 5 segundos a que carguen los registros...")
-    time.sleep(5)
-    print("✅ Registros cargados")
-
-    # Navegar a la última página del paginador
+    # Navegar a la última página del paginador (si existe)
     print("\n🔄 Navegando a la última página...")
     scroll_to_bottom(driver)
     time.sleep(1)
 
     numero_ultima_pagina = None
     pagina_inicio = None
-    
+
     try:
         # Buscar todos los botones de página y seleccionar el último número
         botones_pagina = driver.find_elements(
             By.XPATH,
-            "//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button') and not(contains(@class, 'previous')) and not(contains(@class, 'next')) and not(contains(@class, 'disabled'))]//a",
+            "//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button') and not(contains(@class, 'previous')) and not(contains(@class, 'next')) and not(contains(@class, 'disabled'))]//a",
         )
 
         if botones_pagina:
@@ -621,44 +699,47 @@ try:
             print(f"✅ Navegado a la página {numero_ultima_pagina}")
             time.sleep(3)  # Esperar a que cargue la página
 
-            # Determinar página de inicio según si hay DTE previo
-            if ultimo_dte_procesado and pagina_ultimo_dte:
-                # Si hay un DTE previo, navegar a esa página
-                print(f"\n🔍 Buscando página {pagina_ultimo_dte} del último DTE procesado...")
+            # Determinar página de inicio según si hay código previo
+            if ultimo_codigo_procesado and pagina_ultimo_codigo:
+                # Si hay un código previo, navegar a esa página
+                print(
+                    f"\n🔍 Buscando página {pagina_ultimo_codigo} del último código procesado..."
+                )
                 scroll_to_bottom(driver)
                 time.sleep(1)
-                
+
                 # Obtener página actual
                 try:
                     pagina_activa = driver.find_element(
                         By.XPATH,
-                        "//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
+                        "//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
                     )
                     pagina_actual_num = int(pagina_activa.text.strip())
                 except:
                     pagina_actual_num = int(numero_ultima_pagina)
-                
-                pagina_objetivo = int(pagina_ultimo_dte)
+
+                pagina_objetivo = int(pagina_ultimo_codigo)
                 clicks_necesarios = pagina_actual_num - pagina_objetivo
-                
+
                 print(f"   📄 Página actual: {pagina_actual_num}")
                 print(f"   🎯 Página objetivo: {pagina_objetivo}")
-                print(f"   � Clicks necesarios en 'Anterior': {clicks_necesarios}")
-                
-                # Navegar hacia atrás hasta la página del último DTE
+                print(f"   🔢 Clicks necesarios en 'Anterior': {clicks_necesarios}")
+
+                # Navegar hacia atrás hasta la página del último código
                 for i in range(clicks_necesarios):
                     try:
                         scroll_to_bottom(driver)
                         time.sleep(0.5)
-                        
+
                         # Verificar si el botón está visible en el paginador
                         try:
                             boton_directo = driver.find_element(
                                 By.XPATH,
-                                f"//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button')]//a[normalize-space(text())='{pagina_objetivo}']",
+                                f"//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button')]//a[normalize-space(text())='{pagina_objetivo}']",
                             )
                             driver.execute_script(
-                                "arguments[0].scrollIntoView({block: 'center'});", boton_directo
+                                "arguments[0].scrollIntoView({block: 'center'});",
+                                boton_directo,
                             )
                             time.sleep(0.3)
                             boton_directo.click()
@@ -669,7 +750,7 @@ try:
                             # Si no está visible, usar botón "Anterior"
                             boton_anterior = driver.find_element(
                                 By.XPATH,
-                                "//div[@id='sell_table_paginate']//li[@id='sell_table_previous' and not(contains(@class, 'disabled'))]//a",
+                                "//div[@id='expense_table_paginate']//li[@id='expense_table_previous' and not(contains(@class, 'disabled'))]//a",
                             )
                             driver.execute_script(
                                 "arguments[0].scrollIntoView({block: 'center'});",
@@ -677,88 +758,54 @@ try:
                             )
                             time.sleep(0.3)
                             boton_anterior.click()
-                            
+
                             # Obtener nueva página actual
                             time.sleep(1.5)
                             try:
                                 pagina_activa = driver.find_element(
                                     By.XPATH,
-                                    "//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
+                                    "//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
                                 )
                                 nueva_pagina = pagina_activa.text.strip()
-                                print(f"✅ Click en 'Anterior' - Ahora en página {nueva_pagina}")
-                                
+                                print(
+                                    f"✅ Click en 'Anterior' - Ahora en página {nueva_pagina}"
+                                )
+
                                 if int(nueva_pagina) == pagina_objetivo:
-                                    print(f"🎯 Llegamos a la página objetivo {pagina_objetivo}")
+                                    print(
+                                        f"🎯 Llegamos a la página objetivo {pagina_objetivo}"
+                                    )
                                     break
                             except:
-                                print(f"✅ Click en 'Anterior' ({i+1}/{clicks_necesarios})")
-                                
+                                print(
+                                    f"✅ Click en 'Anterior' ({i+1}/{clicks_necesarios})"
+                                )
+
                     except Exception as e2:
                         print(f"❌ Error al navegar: {e2}")
                         break
-                
-                # Buscar el DTE en la página actual
-                print(f"\n🔍 Buscando DTE {ultimo_dte_procesado} en la página actual...")
+
+                # Buscar el código en la página actual
+                print(
+                    f"\n🔍 Buscando código {ultimo_codigo_procesado} en la página actual..."
+                )
                 time.sleep(2)
-                indice_dte = buscar_dte_en_pagina(driver, ultimo_dte_procesado)
-                
-                if indice_dte is not None:
-                    print(f"✅ DTE encontrado en la fila {indice_dte + 1}")
-                    print(f"   ⏭️ Se continuará desde el siguiente registro (fila {indice_dte + 2})")
+                indice_codigo = buscar_codigo_en_pagina(driver, ultimo_codigo_procesado)
+
+                if indice_codigo is not None:
+                    print(f"✅ Código encontrado en la fila {indice_codigo + 1}")
+                    print(
+                        f"   ⏭️ Se continuará desde el siguiente registro (fila {indice_codigo + 2})"
+                    )
                     pagina_inicio = pagina_objetivo
                 else:
-                    print(f"⚠️ DTE no encontrado en página {pagina_objetivo}")
+                    print(f"⚠️ Código no encontrado en página {pagina_objetivo}")
                     print(f"   📄 Se procesará la página completa por seguridad")
                     pagina_inicio = pagina_objetivo
             else:
-                # Si no hay DTE previo, ir a página 35 (penúltima - 1)
-                print("\n🔄 No hay DTE previo. Navegando a la página penúltima menos 1...")
-                scroll_to_bottom(driver)
-                time.sleep(1)
-
-                try:
-                    numero_pagina_objetivo = int(numero_ultima_pagina) - 2  # 37 - 2 = 35
-                    boton_pagina_35 = driver.find_element(
-                        By.XPATH,
-                        f"//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button')]//a[@data-dt-idx and normalize-space(text())='{numero_pagina_objetivo}']",
-                    )
-
-                    driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center'});", boton_pagina_35
-                    )
-                    time.sleep(0.5)
-                    boton_pagina_35.click()
-                    print(
-                        f"✅ Navegado a la página {numero_pagina_objetivo} (inicio de descargas)"
-                    )
-                    time.sleep(3)
-                    pagina_inicio = numero_pagina_objetivo
-
-                except Exception as e:
-                    print(f"⚠️ No se pudo navegar a la página {numero_pagina_objetivo}: {e}")
-                    print("   Usando botón 'Anterior' dos veces como alternativa...")
-
-                    # Alternativa: usar botón "Anterior" dos veces
-                    for i in range(2):
-                        try:
-                            scroll_to_bottom(driver)
-                            time.sleep(0.5)
-                            boton_anterior = driver.find_element(
-                                By.XPATH,
-                                "//div[@id='sell_table_paginate']//li[@id='sell_table_previous' and not(contains(@class, 'disabled'))]//a",
-                            )
-                            driver.execute_script(
-                                "arguments[0].scrollIntoView({block: 'center'});",
-                                boton_anterior,
-                            )
-                            time.sleep(0.3)
-                            boton_anterior.click()
-                            print(f"✅ Click en 'Anterior' ({i+1}/2)")
-                            time.sleep(2)
-                        except Exception as e2:
-                            print(f"❌ Error al hacer click en 'Anterior': {e2}")
-                            break
+                # Si no hay código previo, comenzar desde la última página
+                print("\n📄 No hay código previo. Comenzando desde la última página...")
+                pagina_inicio = numero_ultima_pagina
 
         else:
             print(
@@ -776,7 +823,7 @@ try:
 
     # NUEVO FLUJO: Procesamiento por páginas
     print("\n" + "=" * 60)
-    print("🚀 INICIANDO PROCESAMIENTO POR PÁGINAS (100 registros por página)")
+    print("🚀 INICIANDO PROCESAMIENTO DE GASTOS (1000 registros por página)")
     print("=" * 60)
 
     ventana_principal = driver.current_window_handle
@@ -788,7 +835,7 @@ try:
     while True:
         # Obtener filas de la página actual
         filas = driver.find_elements(
-            By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
+            By.XPATH, "//table[@id='expense_table']//tbody/tr[@role='row']"
         )
         total_filas_pagina = len(filas)
 
@@ -796,7 +843,7 @@ try:
         try:
             pagina_activa = driver.find_element(
                 By.XPATH,
-                "//div[@id='sell_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
+                "//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
             )
             pagina_actual = pagina_activa.text.strip()
         except:
@@ -806,15 +853,19 @@ try:
         print(f"📄 PÁGINA {pagina_actual} - {total_filas_pagina} registros encontrados")
         print(f"{'='*60}")
 
-        # Si es la primera página y hay un DTE previo, buscar desde dónde continuar
-        if primera_pagina and ultimo_dte_procesado:
-            indice_dte = buscar_dte_en_pagina(driver, ultimo_dte_procesado)
-            if indice_dte is not None:
-                indice_inicio = indice_dte + 1  # Continuar desde el siguiente
-                print(f"⏭️ Continuando desde el registro {indice_inicio + 1} (después del DTE previo)")
+        # Si es la primera página y hay un código previo, buscar desde dónde continuar
+        if primera_pagina and ultimo_codigo_procesado:
+            indice_codigo = buscar_codigo_en_pagina(driver, ultimo_codigo_procesado)
+            if indice_codigo is not None:
+                indice_inicio = indice_codigo + 1  # Continuar desde el siguiente
+                print(
+                    f"⏭️ Continuando desde el registro {indice_inicio + 1} (después del código previo)"
+                )
             else:
                 indice_inicio = 0
-                print(f"ℹ️ DTE previo no encontrado en esta página, procesando todos los registros")
+                print(
+                    f"ℹ️ Código previo no encontrado en esta página, procesando todos los registros"
+                )
             primera_pagina = False
         else:
             indice_inicio = 0
@@ -831,7 +882,7 @@ try:
 
                 # Re-obtener las filas
                 filas = driver.find_elements(
-                    By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
+                    By.XPATH, "//table[@id='expense_table']//tbody/tr[@role='row']"
                 )
                 if idx >= len(filas):
                     print("  ⚠️ La fila ya no está disponible. Saltando...")
@@ -840,16 +891,37 @@ try:
 
                 # Procesar con sistema de reintentos
                 exito = procesar_registro_con_reintentos(
-                    driver, fila, idx, ventana_principal, wait, pagina_actual, max_reintentos=3
+                    driver,
+                    fila,
+                    idx,
+                    ventana_principal,
+                    wait,
+                    pagina_actual,
+                    max_reintentos=3,
                 )
 
+                # Si el registro fue ignorado por estado de pago, continuar con el siguiente
+                if exito == "ignorado":
+                    codigo = extraer_codigo_de_fila(fila)
+                    registros_ignorados.append(
+                        {
+                            "posicion": idx + 1,
+                            "pagina": pagina_actual,
+                            "codigo": codigo if codigo else f"registro_{idx + 1}",
+                            "razon": "Estado de pago no es 'Pagado'",
+                            "fecha": datetime.now().isoformat(),
+                        }
+                    )
+                    print(f"  ⏭️ Saltando al siguiente registro...")
+                    continue
+
                 if not exito:
-                    dte = extraer_dte_de_fila(fila)
+                    codigo = extraer_codigo_de_fila(fila)
                     registros_fallidos.append(
                         {
                             "posicion": idx + 1,
                             "pagina": pagina_actual,
-                            "dte": dte if dte else f"registro_{idx + 1}",
+                            "codigo": codigo if codigo else f"registro_{idx + 1}",
                             "fecha": datetime.now().isoformat(),
                         }
                     )
@@ -857,12 +929,14 @@ try:
 
             except Exception as e:
                 print(f"  ❌ Error crítico en registro {idx + 1}: {e}")
-                dte = extraer_dte_de_fila(filas[idx]) if idx < len(filas) else None
+                codigo = (
+                    extraer_codigo_de_fila(filas[idx]) if idx < len(filas) else None
+                )
                 registros_fallidos.append(
                     {
                         "posicion": idx + 1,
                         "pagina": pagina_actual,
-                        "dte": dte if dte else f"registro_{idx + 1}",
+                        "codigo": codigo if codigo else f"registro_{idx + 1}",
                         "error": str(e),
                         "fecha": datetime.now().isoformat(),
                     }
@@ -892,7 +966,7 @@ try:
         try:
             boton_anterior = driver.find_element(
                 By.XPATH,
-                "//div[@id='sell_table_paginate']//li[@id='sell_table_previous' and not(contains(@class, 'disabled'))]//a",
+                "//div[@id='expense_table_paginate']//li[@id='expense_table_previous' and not(contains(@class, 'disabled'))]//a",
             )
 
             # Hacer scroll al botón
@@ -921,13 +995,19 @@ try:
     print(f"🎉 PROCESAMIENTO COMPLETADO")
     print(f"{'='*60}")
     print(f"✅ Total de registros procesados: {registros_procesados_totales}")
+    print(f"⏭️ Registros ignorados (no pagados): {len(registros_ignorados)}")
     print(f"❌ Registros fallidos: {len(registros_fallidos)}")
-    
+
     # Contar archivos finales
     pdfs_finales = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))
-    jsons_finales = len([f for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json")) 
-                         if not ("registros_fallidos" in f or "ultimo_dte_exitoso" in f)])
-    
+    jsons_finales = len(
+        [
+            f
+            for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
+            if not ("registros_fallidos" in f or "ultimo_codigo_exitoso" in f)
+        ]
+    )
+
     print(f"\n📊 RESUMEN DE ARCHIVOS:")
     print(f"   📄 PDFs iniciales: {pdfs_iniciales}")
     print(f"   📄 PDFs finales: {pdfs_finales}")
@@ -938,8 +1018,10 @@ try:
     print(f"   ✨ JSONs nuevos descargados: {jsons_finales - jsons_iniciales}")
     print(f"")
     print(f"   📦 Total archivos iniciales: {pdfs_iniciales + jsons_iniciales}")
-    print(f"   � Total archivos finales: {pdfs_finales + jsons_finales}")
-    print(f"   🎁 Total archivos nuevos: {(pdfs_finales - pdfs_iniciales) + (jsons_finales - jsons_iniciales)}")
+    print(f"   📦 Total archivos finales: {pdfs_finales + jsons_finales}")
+    print(
+        f"   🎁 Total archivos nuevos: {(pdfs_finales - pdfs_iniciales) + (jsons_finales - jsons_iniciales)}"
+    )
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
 
     # Guardar reportes JSON
@@ -949,7 +1031,7 @@ try:
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
-    guardar_reporte_json(pagina_actual if 'pagina_actual' in locals() else None)
+    guardar_reporte_json(pagina_actual if "pagina_actual" in locals() else None)
     print("📊 Reportes guardados antes de salir")
 
 except Exception as e:
@@ -957,7 +1039,7 @@ except Exception as e:
     import traceback
 
     traceback.print_exc()
-    guardar_reporte_json(pagina_actual if 'pagina_actual' in locals() else None)
+    guardar_reporte_json(pagina_actual if "pagina_actual" in locals() else None)
 
 finally:
     driver.quit()
