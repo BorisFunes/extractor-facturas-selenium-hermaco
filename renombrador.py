@@ -5,15 +5,28 @@ from pathlib import Path
 
 def renombrar_archivos_json():
     """
-    Renombra los archivos JSON en la carpeta descargas_erp
+    Renombra los archivos JSON en una carpeta especificada por el usuario
     usando el campo numeroControl con el prefijo 'hermaco-'
     """
-    # Ruta de la carpeta con los archivos JSON
-    carpeta_descargas = Path("descargas_erp")
+    print("\n" + "=" * 60)
+    print("SELECCIÓN DE CARPETA PARA RENOMBRAR ARCHIVOS")
+    print("=" * 60)
+
+    # Solicitar carpeta al usuario
+    print("\nIngrese la ruta de la carpeta con los archivos JSON a renombrar")
+    print("(Presione Enter para usar 'descargas_erp' por defecto)")
+    carpeta_input = input("\nRuta de la carpeta: ").strip()
+
+    if not carpeta_input:
+        carpeta_descargas = Path("descargas_erp")
+    else:
+        # Remover comillas si las tiene
+        carpeta_input = carpeta_input.strip('"').strip("'")
+        carpeta_descargas = Path(carpeta_input)
 
     # Verificar que la carpeta existe
     if not carpeta_descargas.exists():
-        print(f"Error: La carpeta {carpeta_descargas} no existe")
+        print(f"\n❌ Error: La carpeta {carpeta_descargas} no existe")
         return
 
     # Contadores para estadísticas
@@ -23,12 +36,41 @@ def renombrar_archivos_json():
 
     # Obtener todos los archivos JSON
     archivos_json = list(carpeta_descargas.glob("*.json"))
-    total_archivos = len(archivos_json)
 
-    print(f"Encontrados {total_archivos} archivos JSON en {carpeta_descargas}")
+    # Filtrar archivos JSON que no sean de reporte
+    archivos_json_validos = [
+        f
+        for f in archivos_json
+        if not (
+            "registros_fallidos" in f.name
+            or "ultimo_" in f.name
+            or "duplicados" in f.name
+            or "sin_correlacion" in f.name
+            or "reporte_" in f.name
+        )
+    ]
+
+    total_archivos = len(archivos_json_validos)
+
+    print(f"\n📁 Carpeta seleccionada: {carpeta_descargas}")
+    print(f"📊 Encontrados {total_archivos} archivos JSON a renombrar")
     print("-" * 60)
 
-    for archivo in archivos_json:
+    if total_archivos == 0:
+        print("\n⚠️  No hay archivos JSON para renombrar en esta carpeta")
+        return
+
+    # Confirmar antes de procesar
+    confirmacion = input("\n¿Desea proceder con el renombrado? (S/N): ").strip().upper()
+
+    if confirmacion != "S":
+        print("\n❌ Operación cancelada por el usuario")
+        return
+
+    print("\n🔄 Procesando archivos...")
+    print("-" * 60)
+
+    for archivo in archivos_json_validos:
         try:
             # Leer el contenido del archivo JSON
             with open(archivo, "r", encoding="utf-8") as f:

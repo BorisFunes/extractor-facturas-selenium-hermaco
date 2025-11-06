@@ -206,12 +206,25 @@ def detector_duplicados():
     """
     Detecta archivos duplicados y con correlación inconsistente
     """
-    # Ruta de la carpeta con los archivos JSON
-    carpeta_descargas = Path("descargas_erp")
+    print("\n" + "=" * 80)
+    print("SELECCIÓN DE CARPETA PARA DETECTAR DUPLICADOS EN JSON")
+    print("=" * 80)
+
+    # Solicitar carpeta al usuario
+    print("\nIngrese la ruta de la carpeta con los archivos JSON")
+    print("(Presione Enter para usar 'descargas_erp' por defecto)")
+    carpeta_input = input("\nRuta de la carpeta: ").strip()
+
+    if not carpeta_input:
+        carpeta_descargas = Path("descargas_erp")
+    else:
+        # Remover comillas si las tiene
+        carpeta_input = carpeta_input.strip('"').strip("'")
+        carpeta_descargas = Path(carpeta_input)
 
     # Verificar que la carpeta existe
     if not carpeta_descargas.exists():
-        print(f"Error: La carpeta {carpeta_descargas} no existe")
+        print(f"\n❌ Error: La carpeta {carpeta_descargas} no existe")
         return
 
     # Diccionarios para almacenar los resultados
@@ -221,16 +234,31 @@ def detector_duplicados():
 
     # Obtener todos los archivos JSON
     archivos_json = list(carpeta_descargas.glob("*.json"))
-    total_archivos = len(archivos_json)
 
-    print(f"🔍 Analizando {total_archivos} archivos JSON...")
+    # Filtrar archivos JSON que no sean de reporte
+    archivos_json_validos = [
+        f
+        for f in archivos_json
+        if not (
+            "registros_fallidos" in f.name
+            or "ultimo_" in f.name
+            or "duplicados" in f.name
+            or "sin_correlacion" in f.name
+            or "reporte_" in f.name
+        )
+    ]
+
+    total_archivos = len(archivos_json_validos)
+
+    print(f"\n🔍 Analizando {total_archivos} archivos JSON...")
+    print(f"📁 Carpeta: {carpeta_descargas}")
     print("-" * 80)
 
     # Primera pasada: agrupar por numeroControl
     archivos_datos = {}
     errores = 0
 
-    for archivo in archivos_json:
+    for archivo in archivos_json_validos:
         try:
             with open(archivo, "r", encoding="utf-8") as f:
                 datos = json.load(f)
@@ -342,6 +370,7 @@ def detector_duplicados():
     print("\n" + "=" * 80)
     print("📊 RESUMEN DEL ANÁLISIS")
     print("=" * 80)
+    print(f"Carpeta analizada: {carpeta_descargas}")
     print(f"Total de archivos analizados: {len(archivos_datos)}")
     print(f"Archivos con errores: {errores}")
     print(f"Números de control únicos: {len(archivos_por_numero_control)}")
@@ -578,19 +607,11 @@ def main():
 
         if opcion == "1":
             # Detectar duplicados en JSON
-            print("\n" + "=" * 80)
-            print("DETECTOR DE DUPLICADOS EN JSON")
-            print("=" * 80)
-            print()
             detector_duplicados()
             print("\n✅ Análisis completado")
 
         elif opcion == "2":
             # Detectar duplicados en PDF
-            print("\n" + "=" * 80)
-            print("DETECTOR DE DUPLICADOS EN PDF")
-            print("=" * 80)
-            print()
             detector_duplicados_pdf()
             print("\n✅ Análisis completado")
 
