@@ -73,3 +73,6 @@ cython_debug/
 # Ignore ERP downloads folder
 descargas_erp/
 facturas/
+descargas_gastos/
+descargas_remisiones/
+
