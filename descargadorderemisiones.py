@@ -17,6 +17,9 @@ from datetime import datetime
 DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_remisiones")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
+# Archivo JSON fijo para tracking
+ARCHIVO_ULTIMO_EXITOSO = os.path.join(DOWNLOAD_FOLDER, "ultimo_exitoso.json")
+
 # Configuración de Chrome para descargas automáticas
 chrome_options = webdriver.ChromeOptions()
 prefs = {
@@ -33,10 +36,8 @@ driver = webdriver.Chrome(
     service=Service(ChromeDriverManager().install()), options=chrome_options
 )
 
-# Listas para tracking
-registros_fallidos = []
+# Variable para tracking
 ultimo_correlativo_exitoso = None
-pagina_ultimo_correlativo_exitoso = None
 
 
 def contar_archivos_iniciales():
@@ -46,44 +47,106 @@ def contar_archivos_iniciales():
         [
             f
             for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
-            if not ("registros_fallidos" in f or "ultimo_correlativo_exitoso" in f)
+            if not ("ultimo_exitoso" in f)
         ]
     )
     return pdfs, jsons_remisiones
 
 
 def leer_ultimo_correlativo_exitoso():
-    """Lee el último correlativo exitoso del archivo JSON más reciente"""
+    """Lee el último correlativo exitoso del archivo JSON fijo"""
     try:
-        archivos_ultimo_correlativo = glob.glob(
-            os.path.join(DOWNLOAD_FOLDER, "ultimo_correlativo_exitoso_*.json")
-        )
-        if not archivos_ultimo_correlativo:
+        if not os.path.exists(ARCHIVO_ULTIMO_EXITOSO):
             print(
-                "ℹ️ No se encontró archivo de último correlativo exitoso. Se procesarán todas las páginas."
+                "ℹ️ No se encontró archivo de último correlativo exitoso. Se procesarán todas las remisiones."
             )
-            return None, None
+            return None
 
-        # Obtener el archivo más reciente
-        archivo_mas_reciente = max(archivos_ultimo_correlativo, key=os.path.getmtime)
-
-        with open(archivo_mas_reciente, "r", encoding="utf-8") as f:
+        with open(ARCHIVO_ULTIMO_EXITOSO, "r", encoding="utf-8") as f:
             data = json.load(f)
             ultimo_correlativo = data.get("ultimo_correlativo")
-            pagina = data.get("pagina", None)
 
             if ultimo_correlativo:
                 print(f"✅ Último correlativo exitoso encontrado: {ultimo_correlativo}")
-                if pagina:
-                    print(f"   📄 Última página procesada: {pagina}")
-                return ultimo_correlativo, pagina
+                return ultimo_correlativo
             else:
                 print("⚠️ Archivo de último correlativo exitoso vacío.")
-                return None, None
+                return None
 
     except Exception as e:
         print(f"⚠️ Error al leer último correlativo exitoso: {e}")
-        return None, None
+        return None
+
+
+def guardar_ultimo_correlativo(correlativo):
+    """Guarda el último correlativo exitoso en el archivo JSON fijo"""
+    try:
+        with open(ARCHIVO_ULTIMO_EXITOSO, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "fecha_actualizacion": datetime.now().isoformat(),
+                    "ultimo_correlativo": correlativo,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"  ✅ Último correlativo guardado: {correlativo}")
+        return True
+    except Exception as e:
+        print(f"  ❌ Error al guardar último correlativo: {e}")
+        return False
+
+
+def buscar_correlativo_con_ctrl_f(driver, correlativo_buscado):
+    """
+    Busca un correlativo específico usando Ctrl+F del navegador.
+    Retorna el índice de la fila si lo encuentra, o None si no lo encuentra.
+    """
+    try:
+        print(f"\n🔍 Buscando correlativo: {correlativo_buscado}")
+
+        # Abrir búsqueda con Ctrl+F
+        actions = ActionChains(driver)
+        actions.key_down(Keys.CONTROL).send_keys("f").key_up(Keys.CONTROL).perform()
+        time.sleep(0.5)
+
+        # Escribir el correlativo en el cuadro de búsqueda
+        actions.send_keys(correlativo_buscado).perform()
+        print("  ⏳ Escribiendo correlativo en búsqueda...")
+        time.sleep(1)
+
+        # Presionar Enter para buscar
+        actions.send_keys(Keys.ENTER).perform()
+        print("  ⏳ Esperando respuesta del frontend...")
+        time.sleep(3)
+
+        # Cerrar el cuadro de búsqueda
+        actions.send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.5)
+
+        # Intentar encontrar la fila que contiene el correlativo
+        try:
+            filas = driver.find_elements(
+                By.XPATH, "//table[@id='remission_notes_table']//tbody/tr[@role='row']"
+            )
+            
+            for idx, fila in enumerate(filas):
+                correlativo_fila = extraer_correlativo_de_fila(fila)
+                if correlativo_fila == correlativo_buscado:
+                    print(f"  ✅ Correlativo encontrado en la fila {idx + 1}")
+                    return idx
+            
+            print(f"  ⚠️ Correlativo no encontrado en la tabla")
+            return None
+
+        except Exception as e:
+            print(f"  ❌ Error al buscar en la tabla: {e}")
+            return None
+
+    except Exception as e:
+        print(f"❌ Error al buscar correlativo: {e}")
+        return None
 
 
 def buscar_correlativo_en_pagina(driver, correlativo_buscado):
@@ -453,7 +516,6 @@ def procesar_registro_con_reintentos(
     Procesa un registro con sistema de reintentos (3 intentos con pausa en el último)
     """
     global ultimo_correlativo_exitoso
-    global pagina_ultimo_correlativo_exitoso
 
     correlativo = extraer_correlativo_de_fila(fila)
     if correlativo:
@@ -523,10 +585,11 @@ def procesar_registro_con_reintentos(
                     driver, wait, DOWNLOAD_FOLDER, correlativo, idx + 1
                 ):
                     print("  ✅ Descargas iniciadas correctamente")
-                    ultimo_correlativo_exitoso = (
-                        correlativo if correlativo else f"registro_{idx + 1}"
-                    )
-                    pagina_ultimo_correlativo_exitoso = pagina_actual
+                    
+                    # Guardar el último correlativo exitoso
+                    if correlativo:
+                        ultimo_correlativo_exitoso = correlativo
+                        guardar_ultimo_correlativo(correlativo)
 
                     # Cerrar la ventana de descarga
                     driver.close()
@@ -579,51 +642,6 @@ def procesar_registro_con_reintentos(
     return False
 
 
-def guardar_reporte_json(pagina_actual=None):
-    """
-    Guarda los reportes JSON al finalizar
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Guardar registros fallidos
-    if registros_fallidos:
-        archivo_fallidos = os.path.join(
-            DOWNLOAD_FOLDER, f"registros_fallidos_{timestamp}.json"
-        )
-        with open(archivo_fallidos, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "fecha_reporte": datetime.now().isoformat(),
-                    "total_fallidos": len(registros_fallidos),
-                    "registros": registros_fallidos,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        print(f"\n📄 Reporte de fallidos guardado: {archivo_fallidos}")
-
-    # Guardar último correlativo exitoso
-    if ultimo_correlativo_exitoso:
-        archivo_ultimo = os.path.join(
-            DOWNLOAD_FOLDER, f"ultimo_correlativo_exitoso_{timestamp}.json"
-        )
-        with open(archivo_ultimo, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "fecha_reporte": datetime.now().isoformat(),
-                    "ultimo_correlativo": ultimo_correlativo_exitoso,
-                    "pagina": pagina_actual,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        print(f"📄 Último correlativo exitoso guardado: {archivo_ultimo}")
-        if pagina_actual:
-            print(f"   📄 Página: {pagina_actual}")
-
-
 try:
     # Contar archivos iniciales
     print("📊 Contando archivos existentes en la carpeta de descargas...")
@@ -634,9 +652,7 @@ try:
 
     # Leer último correlativo exitoso
     print("\n🔍 Buscando último correlativo procesado...")
-    ultimo_correlativo_procesado, pagina_ultimo_correlativo = (
-        leer_ultimo_correlativo_exitoso()
-    )
+    ultimo_correlativo_procesado = leer_ultimo_correlativo_exitoso()
 
     # Maximizar ventana
     driver.maximize_window()
@@ -771,28 +787,34 @@ try:
     print(f"📄 TOTAL DE REGISTROS: {total_filas}")
     print(f"{'='*60}")
 
-    # Determinar desde dónde empezar
-    indice_inicio = 0
+    # Determinar desde dónde empezar (buscar con Ctrl+F si hay último correlativo)
+    indice_ultimo = None
     if ultimo_correlativo_procesado:
-        indice_correlativo = buscar_correlativo_en_pagina(
-            driver, ultimo_correlativo_procesado
-        )
-        if indice_correlativo is not None:
-            indice_inicio = indice_correlativo + 1
-            print(
-                f"⏭️ Continuando desde el registro {indice_inicio + 1} (después del correlativo previo)"
-            )
+        indice_ultimo = buscar_correlativo_con_ctrl_f(driver, ultimo_correlativo_procesado)
+        
+        if indice_ultimo is not None:
+            print(f"✅ Último correlativo encontrado en índice {indice_ultimo}")
+            print(f"⬆️ Se procesarán los registros ANTERIORES (hacia arriba) desde el índice {indice_ultimo - 1} hasta el índice 0")
         else:
-            print(f"ℹ️ Correlativo previo no encontrado, procesando todos los registros")
+            print(f"⚠️ Correlativo previo no encontrado, procesando desde el final hacia arriba")
+            indice_ultimo = total_filas  # Empezar desde el final si no se encuentra
 
-    # Procesar cada registro
-    for idx in range(indice_inicio, total_filas):
+    else:
+        print(f"ℹ️ No hay correlativo previo, procesando desde el final hacia arriba")
+        indice_ultimo = total_filas  # Empezar desde el final
+
+    # Procesar cada registro HACIA ARRIBA (índices menores = más recientes)
+    # Rango: desde (indice_ultimo - 1) hasta 0 (inclusive), decrementando
+    registros_a_procesar = indice_ultimo
+    print(f"\n🔢 Se procesarán {registros_a_procesar} registros nuevos")
+    
+    for idx in range(indice_ultimo - 1, -1, -1):  # Desde indice_ultimo-1 hasta 0, decrementando
         try:
             driver.switch_to.window(ventana_principal)
             registros_procesados_totales += 1
 
             print(
-                f"\n📄 Procesando registro {idx + 1}/{total_filas} (Total global: {registros_procesados_totales}) ..."
+                f"\n📄 Procesando registro {idx + 1}/{total_filas} (Procesados: {registros_procesados_totales}/{registros_a_procesar}) ..."
             )
 
             # Re-obtener las filas
@@ -816,33 +838,10 @@ try:
             )
 
             if not exito:
-                correlativo = extraer_correlativo_de_fila(fila)
-                registros_fallidos.append(
-                    {
-                        "posicion": idx + 1,
-                        "correlativo": (
-                            correlativo if correlativo else f"registro_{idx + 1}"
-                        ),
-                        "fecha": datetime.now().isoformat(),
-                    }
-                )
-                print(f"  ❌ Registro marcado como fallido después de 3 intentos")
+                print(f"  ❌ Registro falló después de 3 intentos")
 
         except Exception as e:
             print(f"  ❌ Error crítico en registro {idx + 1}: {e}")
-            correlativo = (
-                extraer_correlativo_de_fila(filas[idx]) if idx < len(filas) else None
-            )
-            registros_fallidos.append(
-                {
-                    "posicion": idx + 1,
-                    "correlativo": (
-                        correlativo if correlativo else f"registro_{idx + 1}"
-                    ),
-                    "error": str(e),
-                    "fecha": datetime.now().isoformat(),
-                }
-            )
             try:
                 if len(driver.window_handles) > 1:
                     for handle in driver.window_handles:
@@ -860,7 +859,6 @@ try:
     print(f"🎉 PROCESAMIENTO COMPLETADO")
     print(f"{'='*60}")
     print(f"✅ Total de registros procesados: {registros_procesados_totales}")
-    print(f"❌ Registros fallidos: {len(registros_fallidos)}")
 
     # Contar archivos finales
     pdfs_finales = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))
@@ -887,23 +885,24 @@ try:
         f"   🎁 Total archivos nuevos: {(pdfs_finales - pdfs_iniciales) + (jsons_finales - jsons_iniciales)}"
     )
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
-
-    # Guardar reportes JSON
-    guardar_reporte_json(pagina_actual="1")
+    
+    if ultimo_correlativo_exitoso:
+        print(f"📄 Último correlativo procesado: {ultimo_correlativo_exitoso}")
 
     input("\nPresiona Enter para cerrar el navegador...")
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
-    guardar_reporte_json(pagina_actual="1")
-    print("📊 Reportes guardados antes de salir")
+    if ultimo_correlativo_exitoso:
+        print(f"� Último correlativo guardado: {ultimo_correlativo_exitoso}")
 
 except Exception as e:
     print(f"❌ Error: {e}")
     import traceback
 
     traceback.print_exc()
-    guardar_reporte_json(pagina_actual="1")
+    if ultimo_correlativo_exitoso:
+        print(f"📄 Último correlativo guardado: {ultimo_correlativo_exitoso}")
 
 finally:
     driver.quit()

@@ -33,11 +33,56 @@ driver = webdriver.Chrome(
     service=Service(ChromeDriverManager().install()), options=chrome_options
 )
 
-# Listas para tracking
-registros_fallidos = []
+# Archivos JSON fijos para tracking
+ARCHIVO_DESCARGADOS = os.path.join(DOWNLOAD_FOLDER, "01descargados.json")
+ARCHIVO_IGNORADOS = os.path.join(DOWNLOAD_FOLDER, "02ignorados.json")
+
+# Listas para tracking (se cargan desde los archivos)
+registros_descargados = []
 registros_ignorados = []
-ultimo_codigo_exitoso = None
-pagina_ultimo_codigo_exitoso = None
+
+
+def cargar_json_tracking(archivo):
+    """Carga un archivo JSON de tracking. Si no existe, retorna una lista vacía."""
+    try:
+        if os.path.exists(archivo):
+            with open(archivo, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                registros = data.get("registros", [])
+                print(
+                    f"✅ Cargados {len(registros)} registros desde {os.path.basename(archivo)}"
+                )
+                return registros
+        else:
+            print(
+                f"ℹ️ Archivo {os.path.basename(archivo)} no existe. Se creará uno nuevo."
+            )
+            return []
+    except Exception as e:
+        print(f"⚠️ Error al leer {os.path.basename(archivo)}: {e}")
+        return []
+
+
+def guardar_json_tracking(archivo, registros, tipo_registro):
+    """Guarda la lista de registros en un archivo JSON fijo."""
+    try:
+        with open(archivo, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "fecha_actualizacion": datetime.now().isoformat(),
+                    "total_registros": len(registros),
+                    "tipo": tipo_registro,
+                    "registros": registros,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"✅ Guardados {len(registros)} registros en {os.path.basename(archivo)}")
+        return True
+    except Exception as e:
+        print(f"❌ Error al guardar {os.path.basename(archivo)}: {e}")
+        return False
 
 
 def contar_archivos_iniciales():
@@ -47,7 +92,7 @@ def contar_archivos_iniciales():
         [
             f
             for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
-            if not ("registros_fallidos" in f or "ultimo_codigo_exitoso" in f)
+            if not ("01descargados" in f or "02ignorados" in f)
         ]
     )
     return pdfs, jsons_gastos
@@ -85,6 +130,11 @@ def leer_ultimo_codigo_exitoso():
     except Exception as e:
         print(f"⚠️ Error al leer último código exitoso: {e}")
         return None, None
+
+
+def verificar_registro_en_lista(numero_documento, lista):
+    """Verifica si un número de documento ya existe en una lista de registros."""
+    return any(reg.get("numero_documento") == numero_documento for reg in lista)
 
 
 def buscar_codigo_en_pagina(driver, codigo_buscado):
@@ -209,6 +259,27 @@ def sanitize_filename(name: str) -> str:
     for ch in invalid:
         cleaned = cleaned.replace(ch, "_")
     return cleaned
+
+
+def extraer_numero_documento_de_fila(fila):
+    """
+    Extrae el número de documento de la fila (columna 'Número de Documento').
+    Retorna el número de documento o None si no lo encuentra.
+    """
+    try:
+        # Buscar todas las celdas de la fila
+        celdas = fila.find_elements(By.TAG_NAME, "td")
+
+        # El número de documento está en la 5ta columna (índice 4)
+        # Basado en: Fecha, Sucursal, Proveedor, Tipo de documento, Número de Documento
+        if len(celdas) >= 5:
+            numero_documento = celdas[4].text.strip()
+            if numero_documento:
+                return numero_documento
+    except Exception as e:
+        print(f"  ⚠️ Error al extraer número de documento: {e}")
+
+    return None
 
 
 def extraer_codigo_de_fila(fila):
@@ -343,22 +414,34 @@ def procesar_registro_con_reintentos(
 ):
     """
     Procesa un registro con sistema de reintentos (3 intentos con pausa en el último)
+    Retorna: "descargado", "ignorado", o False
     """
-    global ultimo_codigo_exitoso
-    global pagina_ultimo_codigo_exitoso
+    global registros_descargados
+    global registros_ignorados
 
-    # Verificar primero el estado de pago
-    if not verificar_estado_pago(fila):
-        print(f"  ⏭️ Registro ignorado por estado de pago")
-        return "ignorado"  # Retornar un valor especial para indicar que fue ignorado
-
+    # Extraer número de documento primero
+    numero_documento = extraer_numero_documento_de_fila(fila)
     codigo = extraer_codigo_de_fila(fila)
-    if codigo:
-        print(f"  🏷️ Código detectado: {codigo}")
+
+    if numero_documento:
+        print(f"  📄 Número de documento: {numero_documento}")
     else:
-        print(
-            "  ⚠️ No se pudo detectar código en la fila. Se usará ID/índice como fallback."
-        )
+        print(f"  ⚠️ No se pudo detectar número de documento")
+
+    if codigo:
+        print(f"  🏷️ Código: {codigo}")
+
+    # Verificar si ya fue descargado previamente
+    if numero_documento and verificar_registro_en_lista(
+        numero_documento, registros_descargados
+    ):
+        print(f"  ✓ Registro ya descargado previamente. Saltando...")
+        return "ya_descargado"
+
+    # Verificar el estado de pago
+    if not verificar_estado_pago(fila):
+        print(f"  ⏭️ Registro con estado 'Debido' - Se agregará a ignorados")
+        return "ignorado"
 
     for intento in range(1, max_reintentos + 1):
         try:
@@ -430,11 +513,10 @@ def procesar_registro_con_reintentos(
 
                 if descargar_pdf_y_json(driver, wait, DOWNLOAD_FOLDER, codigo, idx + 1):
                     print("  ✅ Descargas iniciadas correctamente")
-                    ultimo_codigo_exitoso = codigo if codigo else f"registro_{idx + 1}"
-                    pagina_ultimo_codigo_exitoso = pagina_actual
+                    # Marcar como descargado
                     driver.close()
                     driver.switch_to.window(ventana_principal)
-                    return True
+                    return "descargado"
                 else:
                     print("  ⚠️ Problemas con descargas")
                     driver.close()
@@ -471,80 +553,179 @@ def procesar_registro_con_reintentos(
     return False
 
 
-def guardar_reporte_json(pagina_actual=None):
+def guardar_registros_actualizados():
     """
-    Guarda los reportes JSON al finalizar
+    Guarda los registros descargados e ignorados en sus archivos JSON fijos
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    global registros_descargados
+    global registros_ignorados
 
-    # Guardar registros fallidos
-    if registros_fallidos:
-        archivo_fallidos = os.path.join(
-            DOWNLOAD_FOLDER, f"registros_fallidos_{timestamp}.json"
-        )
-        with open(archivo_fallidos, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "fecha_reporte": datetime.now().isoformat(),
-                    "total_fallidos": len(registros_fallidos),
-                    "registros": registros_fallidos,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        print(f"\n📄 Reporte de fallidos guardado: {archivo_fallidos}")
+    print(f"\n📊 Guardando registros actualizados...")
 
-    # Guardar registros ignorados
-    if registros_ignorados:
-        archivo_ignorados = os.path.join(
-            DOWNLOAD_FOLDER, f"registros_ignorados_{timestamp}.json"
-        )
-        with open(archivo_ignorados, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "fecha_reporte": datetime.now().isoformat(),
-                    "total_ignorados": len(registros_ignorados),
-                    "registros": registros_ignorados,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        print(f"📄 Reporte de ignorados guardado: {archivo_ignorados}")
+    # Guardar descargados
+    guardar_json_tracking(ARCHIVO_DESCARGADOS, registros_descargados, "descargados")
 
-    # Guardar último código exitoso
-    if ultimo_codigo_exitoso:
-        archivo_ultimo = os.path.join(
-            DOWNLOAD_FOLDER, f"ultimo_codigo_exitoso_{timestamp}.json"
-        )
-        with open(archivo_ultimo, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "fecha_reporte": datetime.now().isoformat(),
-                    "ultimo_codigo": ultimo_codigo_exitoso,
-                    "pagina": pagina_actual,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
+    # Guardar ignorados
+    guardar_json_tracking(ARCHIVO_IGNORADOS, registros_ignorados, "ignorados")
+
+    print(f"✅ Registros guardados correctamente")
+
+
+def verificar_ignorados_cambiaron_a_pagado(driver, wait):
+    """
+    Verifica si algún registro ignorado ahora tiene estado 'Pagado' y lo procesa
+    Retorna el número de registros que cambiaron de estado
+    """
+    global registros_ignorados
+    global registros_descargados
+
+    if not registros_ignorados:
+        print("ℹ️ No hay registros ignorados para verificar")
+        return 0
+
+    print(f"\n{'='*60}")
+    print(f"🔍 VERIFICANDO REGISTROS IGNORADOS PREVIAMENTE")
+    print(f"{'='*60}")
+    print(f"Total de registros ignorados a verificar: {len(registros_ignorados)}")
+
+    registros_cambiados = []
+    registros_aun_ignorados = []
+    ventana_principal = driver.current_window_handle
+
+    for idx_ignorado, registro_ignorado in enumerate(registros_ignorados):
+        numero_documento = registro_ignorado.get("numero_documento")
+        codigo = registro_ignorado.get("codigo")
+
+        if not numero_documento:
+            print(
+                f"\n⚠️ Registro {idx_ignorado + 1} sin número de documento. Saltando..."
             )
-        print(f"📄 Último código exitoso guardado: {archivo_ultimo}")
-        if pagina_actual:
-            print(f"   📄 Página: {pagina_actual}")
+            registros_aun_ignorados.append(registro_ignorado)
+            continue
+
+        print(
+            f"\n🔍 Verificando registro {idx_ignorado + 1}/{len(registros_ignorados)}"
+        )
+        print(f"   📄 Número de documento: {numero_documento}")
+
+        try:
+            # Buscar el registro en la tabla actual usando Ctrl+F
+            actions = ActionChains(driver)
+            actions.key_down(Keys.CONTROL).send_keys("f").key_up(Keys.CONTROL).perform()
+            time.sleep(0.5)
+
+            # Escribir el número de documento
+            actions.send_keys(numero_documento).perform()
+            time.sleep(1)
+
+            # Presionar Enter
+            actions.send_keys(Keys.ENTER).perform()
+            time.sleep(2)
+
+            # Cerrar búsqueda
+            actions.send_keys(Keys.ESCAPE).perform()
+            time.sleep(0.5)
+
+            # Buscar la fila que contiene el número de documento
+            try:
+                # Buscar en todas las filas visibles
+                filas = driver.find_elements(
+                    By.XPATH, "//table[@id='expense_table']//tbody/tr[@role='row']"
+                )
+
+                fila_encontrada = None
+                indice_fila = None
+
+                for idx_fila, fila in enumerate(filas):
+                    numero_doc_fila = extraer_numero_documento_de_fila(fila)
+                    if numero_doc_fila == numero_documento:
+                        fila_encontrada = fila
+                        indice_fila = idx_fila
+                        break
+
+                if not fila_encontrada:
+                    print(f"   ⚠️ No se encontró el registro en la página actual")
+                    registros_aun_ignorados.append(registro_ignorado)
+                    continue
+
+                print(f"   ✅ Registro encontrado en la fila {indice_fila + 1}")
+
+                # Verificar el estado de pago
+                if verificar_estado_pago(fila_encontrada):
+                    print(
+                        f"   🎉 El registro ahora está 'Pagado'. Procesando descarga..."
+                    )
+
+                    # Procesar el registro
+                    resultado = procesar_registro_con_reintentos(
+                        driver,
+                        fila_encontrada,
+                        indice_fila,
+                        ventana_principal,
+                        wait,
+                        pagina_actual="verificacion_ignorados",
+                        max_reintentos=3,
+                    )
+
+                    if resultado == "descargado":
+                        print(f"   ✅ Registro descargado exitosamente")
+                        # Agregar a descargados
+                        registros_descargados.append(
+                            {
+                                "numero_documento": numero_documento,
+                                "codigo": codigo,
+                                "fecha_descarga": datetime.now().isoformat(),
+                                "origen": "verificacion_ignorados",
+                            }
+                        )
+                        registros_cambiados.append(registro_ignorado)
+                        # No agregarlo a registros_aun_ignorados (se eliminará)
+                    else:
+                        print(f"   ❌ Falló la descarga del registro")
+                        registros_aun_ignorados.append(registro_ignorado)
+                else:
+                    print(
+                        f"   ℹ️ El registro aún está 'Debido'. Manteniéndolo en ignorados"
+                    )
+                    registros_aun_ignorados.append(registro_ignorado)
+
+            except Exception as e:
+                print(f"   ❌ Error al buscar/procesar registro: {e}")
+                registros_aun_ignorados.append(registro_ignorado)
+
+        except Exception as e:
+            print(f"   ❌ Error en verificación: {e}")
+            registros_aun_ignorados.append(registro_ignorado)
+
+    # Actualizar la lista de ignorados
+    registros_ignorados = registros_aun_ignorados
+
+    print(f"\n{'='*60}")
+    print(f"📊 RESULTADO DE VERIFICACIÓN DE IGNORADOS")
+    print(f"{'='*60}")
+    print(f"Registros que cambiaron a 'Pagado': {len(registros_cambiados)}")
+    print(f"Registros que siguen 'Debido': {len(registros_aun_ignorados)}")
+    print(f"{'='*60}")
+
+    return len(registros_cambiados)
 
 
 try:
+    # Cargar registros descargados e ignorados previos
+    print("=" * 60)
+    print("📂 CARGANDO REGISTROS PREVIOS")
+    print("=" * 60)
+    registros_descargados = cargar_json_tracking(ARCHIVO_DESCARGADOS)
+    registros_ignorados = cargar_json_tracking(ARCHIVO_IGNORADOS)
+    print(f"✅ Registros descargados: {len(registros_descargados)}")
+    print(f"⏭️ Registros ignorados: {len(registros_ignorados)}")
+
     # Contar archivos iniciales
-    print("📊 Contando archivos existentes en la carpeta de descargas...")
+    print("\n📊 Contando archivos existentes en la carpeta de descargas...")
     pdfs_iniciales, jsons_iniciales = contar_archivos_iniciales()
     print(f"   📄 PDFs existentes: {pdfs_iniciales}")
     print(f"   📄 JSONs existentes: {jsons_iniciales}")
     print(f"   📦 Total archivos iniciales: {pdfs_iniciales + jsons_iniciales}")
-
-    # Leer último código exitoso
-    print("\n🔍 Buscando último código procesado...")
-    ultimo_codigo_procesado, pagina_ultimo_codigo = leer_ultimo_codigo_exitoso()
 
     # Maximizar ventana
     driver.maximize_window()
@@ -669,13 +850,18 @@ try:
     time.sleep(5)
     print("✅ Registros cargados")
 
+    # Verificar si hay registros ignorados que ahora están pagados
+    if registros_ignorados:
+        verificar_ignorados_cambiaron_a_pagado(driver, wait)
+        # Guardar cambios después de la verificación
+        guardar_registros_actualizados()
+
     # Navegar a la última página del paginador (si existe)
     print("\n🔄 Navegando a la última página...")
     scroll_to_bottom(driver)
     time.sleep(1)
 
     numero_ultima_pagina = None
-    pagina_inicio = None
 
     try:
         # Buscar todos los botones de página y seleccionar el último número
@@ -698,115 +884,6 @@ try:
             ultimo_boton.click()
             print(f"✅ Navegado a la página {numero_ultima_pagina}")
             time.sleep(3)  # Esperar a que cargue la página
-
-            # Determinar página de inicio según si hay código previo
-            if ultimo_codigo_procesado and pagina_ultimo_codigo:
-                # Si hay un código previo, navegar a esa página
-                print(
-                    f"\n🔍 Buscando página {pagina_ultimo_codigo} del último código procesado..."
-                )
-                scroll_to_bottom(driver)
-                time.sleep(1)
-
-                # Obtener página actual
-                try:
-                    pagina_activa = driver.find_element(
-                        By.XPATH,
-                        "//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
-                    )
-                    pagina_actual_num = int(pagina_activa.text.strip())
-                except:
-                    pagina_actual_num = int(numero_ultima_pagina)
-
-                pagina_objetivo = int(pagina_ultimo_codigo)
-                clicks_necesarios = pagina_actual_num - pagina_objetivo
-
-                print(f"   📄 Página actual: {pagina_actual_num}")
-                print(f"   🎯 Página objetivo: {pagina_objetivo}")
-                print(f"   🔢 Clicks necesarios en 'Anterior': {clicks_necesarios}")
-
-                # Navegar hacia atrás hasta la página del último código
-                for i in range(clicks_necesarios):
-                    try:
-                        scroll_to_bottom(driver)
-                        time.sleep(0.5)
-
-                        # Verificar si el botón está visible en el paginador
-                        try:
-                            boton_directo = driver.find_element(
-                                By.XPATH,
-                                f"//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button')]//a[normalize-space(text())='{pagina_objetivo}']",
-                            )
-                            driver.execute_script(
-                                "arguments[0].scrollIntoView({block: 'center'});",
-                                boton_directo,
-                            )
-                            time.sleep(0.3)
-                            boton_directo.click()
-                            print(f"✅ Click directo en página {pagina_objetivo}")
-                            time.sleep(2)
-                            break
-                        except:
-                            # Si no está visible, usar botón "Anterior"
-                            boton_anterior = driver.find_element(
-                                By.XPATH,
-                                "//div[@id='expense_table_paginate']//li[@id='expense_table_previous' and not(contains(@class, 'disabled'))]//a",
-                            )
-                            driver.execute_script(
-                                "arguments[0].scrollIntoView({block: 'center'});",
-                                boton_anterior,
-                            )
-                            time.sleep(0.3)
-                            boton_anterior.click()
-
-                            # Obtener nueva página actual
-                            time.sleep(1.5)
-                            try:
-                                pagina_activa = driver.find_element(
-                                    By.XPATH,
-                                    "//div[@id='expense_table_paginate']//li[contains(@class, 'paginate_button') and contains(@class, 'active')]//a",
-                                )
-                                nueva_pagina = pagina_activa.text.strip()
-                                print(
-                                    f"✅ Click en 'Anterior' - Ahora en página {nueva_pagina}"
-                                )
-
-                                if int(nueva_pagina) == pagina_objetivo:
-                                    print(
-                                        f"🎯 Llegamos a la página objetivo {pagina_objetivo}"
-                                    )
-                                    break
-                            except:
-                                print(
-                                    f"✅ Click en 'Anterior' ({i+1}/{clicks_necesarios})"
-                                )
-
-                    except Exception as e2:
-                        print(f"❌ Error al navegar: {e2}")
-                        break
-
-                # Buscar el código en la página actual
-                print(
-                    f"\n🔍 Buscando código {ultimo_codigo_procesado} en la página actual..."
-                )
-                time.sleep(2)
-                indice_codigo = buscar_codigo_en_pagina(driver, ultimo_codigo_procesado)
-
-                if indice_codigo is not None:
-                    print(f"✅ Código encontrado en la fila {indice_codigo + 1}")
-                    print(
-                        f"   ⏭️ Se continuará desde el siguiente registro (fila {indice_codigo + 2})"
-                    )
-                    pagina_inicio = pagina_objetivo
-                else:
-                    print(f"⚠️ Código no encontrado en página {pagina_objetivo}")
-                    print(f"   📄 Se procesará la página completa por seguridad")
-                    pagina_inicio = pagina_objetivo
-            else:
-                # Si no hay código previo, comenzar desde la última página
-                print("\n📄 No hay código previo. Comenzando desde la última página...")
-                pagina_inicio = numero_ultima_pagina
-
         else:
             print(
                 "⚠️ No se encontraron botones de paginación. Puede que solo haya una página."
@@ -829,8 +906,6 @@ try:
     ventana_principal = driver.current_window_handle
     registros_procesados_totales = 0
     pagina_actual = None
-    primera_pagina = True
-    indice_inicio = 0
 
     while True:
         # Obtener filas de la página actual
@@ -853,25 +928,8 @@ try:
         print(f"📄 PÁGINA {pagina_actual} - {total_filas_pagina} registros encontrados")
         print(f"{'='*60}")
 
-        # Si es la primera página y hay un código previo, buscar desde dónde continuar
-        if primera_pagina and ultimo_codigo_procesado:
-            indice_codigo = buscar_codigo_en_pagina(driver, ultimo_codigo_procesado)
-            if indice_codigo is not None:
-                indice_inicio = indice_codigo + 1  # Continuar desde el siguiente
-                print(
-                    f"⏭️ Continuando desde el registro {indice_inicio + 1} (después del código previo)"
-                )
-            else:
-                indice_inicio = 0
-                print(
-                    f"ℹ️ Código previo no encontrado en esta página, procesando todos los registros"
-                )
-            primera_pagina = False
-        else:
-            indice_inicio = 0
-
-        # Procesar cada registro de la página (desde indice_inicio hacia abajo)
-        for idx in range(indice_inicio, total_filas_pagina):
+        # Procesar cada registro de la página
+        for idx in range(0, total_filas_pagina):
             try:
                 driver.switch_to.window(ventana_principal)
                 registros_procesados_totales += 1
@@ -889,8 +947,12 @@ try:
                     continue
                 fila = filas[idx]
 
+                # Extraer número de documento
+                numero_documento = extraer_numero_documento_de_fila(fila)
+                codigo = extraer_codigo_de_fila(fila)
+
                 # Procesar con sistema de reintentos
-                exito = procesar_registro_con_reintentos(
+                resultado = procesar_registro_con_reintentos(
                     driver,
                     fila,
                     idx,
@@ -900,47 +962,51 @@ try:
                     max_reintentos=3,
                 )
 
-                # Si el registro fue ignorado por estado de pago, continuar con el siguiente
-                if exito == "ignorado":
-                    codigo = extraer_codigo_de_fila(fila)
-                    registros_ignorados.append(
-                        {
-                            "posicion": idx + 1,
-                            "pagina": pagina_actual,
-                            "codigo": codigo if codigo else f"registro_{idx + 1}",
-                            "razon": "Estado de pago no es 'Pagado'",
-                            "fecha": datetime.now().isoformat(),
-                        }
-                    )
-                    print(f"  ⏭️ Saltando al siguiente registro...")
+                # Manejar resultados
+                if resultado == "ya_descargado":
+                    print(f"  ⏭️ Ya descargado previamente. Saltando...")
                     continue
 
-                if not exito:
-                    codigo = extraer_codigo_de_fila(fila)
-                    registros_fallidos.append(
-                        {
-                            "posicion": idx + 1,
-                            "pagina": pagina_actual,
-                            "codigo": codigo if codigo else f"registro_{idx + 1}",
-                            "fecha": datetime.now().isoformat(),
-                        }
-                    )
-                    print(f"  ❌ Registro marcado como fallido después de 3 intentos")
+                elif resultado == "ignorado":
+                    # Agregar a la lista de ignorados
+                    if numero_documento and not verificar_registro_en_lista(
+                        numero_documento, registros_ignorados
+                    ):
+                        registros_ignorados.append(
+                            {
+                                "numero_documento": numero_documento,
+                                "codigo": codigo if codigo else "sin_codigo",
+                                "pagina": pagina_actual,
+                                "posicion": idx + 1,
+                                "fecha_ignorado": datetime.now().isoformat(),
+                                "razon": "Estado de pago 'Debido'",
+                            }
+                        )
+                        print(f"  📝 Agregado a ignorados")
+                    continue
+
+                elif resultado == "descargado":
+                    # Agregar a la lista de descargados
+                    if numero_documento:
+                        registros_descargados.append(
+                            {
+                                "numero_documento": numero_documento,
+                                "codigo": codigo if codigo else "sin_codigo",
+                                "pagina": pagina_actual,
+                                "posicion": idx + 1,
+                                "fecha_descarga": datetime.now().isoformat(),
+                            }
+                        )
+                        print(f"  ✅ Agregado a descargados")
+                    continue
+
+                else:
+                    # Falló la descarga
+                    print(f"  ❌ Registro falló después de 3 intentos")
+                    continue
 
             except Exception as e:
                 print(f"  ❌ Error crítico en registro {idx + 1}: {e}")
-                codigo = (
-                    extraer_codigo_de_fila(filas[idx]) if idx < len(filas) else None
-                )
-                registros_fallidos.append(
-                    {
-                        "posicion": idx + 1,
-                        "pagina": pagina_actual,
-                        "codigo": codigo if codigo else f"registro_{idx + 1}",
-                        "error": str(e),
-                        "fecha": datetime.now().isoformat(),
-                    }
-                )
                 try:
                     if len(driver.window_handles) > 1:
                         for handle in driver.window_handles:
@@ -995,8 +1061,8 @@ try:
     print(f"🎉 PROCESAMIENTO COMPLETADO")
     print(f"{'='*60}")
     print(f"✅ Total de registros procesados: {registros_procesados_totales}")
+    print(f"📥 Registros descargados: {len(registros_descargados)}")
     print(f"⏭️ Registros ignorados (no pagados): {len(registros_ignorados)}")
-    print(f"❌ Registros fallidos: {len(registros_fallidos)}")
 
     # Contar archivos finales
     pdfs_finales = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))
@@ -1004,7 +1070,7 @@ try:
         [
             f
             for f in glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.json"))
-            if not ("registros_fallidos" in f or "ultimo_codigo_exitoso" in f)
+            if not ("01descargados" in f or "02ignorados" in f)
         ]
     )
 
@@ -1024,22 +1090,22 @@ try:
     )
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
 
-    # Guardar reportes JSON
-    guardar_reporte_json(pagina_actual)
+    # Guardar registros actualizados
+    guardar_registros_actualizados()
 
     input("\nPresiona Enter para cerrar el navegador...")
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
-    guardar_reporte_json(pagina_actual if "pagina_actual" in locals() else None)
-    print("📊 Reportes guardados antes de salir")
+    guardar_registros_actualizados()
+    print("📊 Registros guardados antes de salir")
 
 except Exception as e:
     print(f"❌ Error: {e}")
     import traceback
 
     traceback.print_exc()
-    guardar_reporte_json(pagina_actual if "pagina_actual" in locals() else None)
+    guardar_registros_actualizados()
 
 finally:
     driver.quit()

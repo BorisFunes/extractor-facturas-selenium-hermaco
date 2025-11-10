@@ -8,19 +8,13 @@ from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
-import glob
 import json
 import traceback
-from pathlib import Path
 from datetime import datetime
 
 # Configuración de la carpeta de descargas
-DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_erp")
+DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_diarias")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
-
-# ⚠️ CONFIGURACIÓN DE BÚSQUEDA
-DTE_INICIAL = "DTE-03-M001P001-000000000001376"
-FECHA_LIMITE = "10/11/2025 08:13 am"
 
 # Configuración de Chrome para descargas automáticas
 chrome_options = webdriver.ChromeOptions()
@@ -38,45 +32,76 @@ driver = webdriver.Chrome(
     service=Service(ChromeDriverManager().install()), options=chrome_options
 )
 
-# Listas para tracking
+# Variables globales
 registros_fallidos = []
 ultimo_dte_exitoso = None
 
 
-def buscar_dte_en_tabla(driver, dte_buscado):
+def cargar_ultimo_exitoso():
     """
-    Busca un DTE específico en la tabla usando Ctrl+F.
-    Retorna la fila si lo encuentra, o None si no lo encuentra.
+    Carga el último DTE exitoso desde el archivo JSON
+    """
+    archivo = os.path.join(DOWNLOAD_FOLDER, "ultimo_exitoso.json")
+    try:
+        if os.path.exists(archivo):
+            with open(archivo, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                print(f"📂 Último DTE exitoso cargado: {data.get('ultimo_dte', 'N/A')}")
+                return data.get("ultimo_dte")
+        else:
+            print("📂 No hay archivo de último exitoso. Comenzando desde el principio.")
+            return None
+    except Exception as e:
+        print(f"⚠️ Error al cargar último exitoso: {e}")
+        return None
+
+
+def guardar_ultimo_exitoso(dte):
+    """
+    Guarda el último DTE exitoso en el archivo JSON
+    """
+    archivo = os.path.join(DOWNLOAD_FOLDER, "ultimo_exitoso.json")
+    try:
+        data = {
+            "fecha_actualizacion": datetime.now().isoformat(),
+            "ultimo_dte": dte,
+        }
+        with open(archivo, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"💾 Último DTE guardado: {dte}")
+    except Exception as e:
+        print(f"⚠️ Error al guardar último exitoso: {e}")
+
+
+def buscar_dte_con_ctrl_f(driver, dte_buscado):
+    """
+    Busca un DTE específico usando Ctrl+F y retorna su índice si lo encuentra
     """
     try:
-        print(f"\n🔍 Buscando DTE: {dte_buscado}")
+        print(f"🔍 Buscando DTE: {dte_buscado}")
 
         # Abrir búsqueda con Ctrl+F
         actions = ActionChains(driver)
         actions.key_down(Keys.CONTROL).send_keys("f").key_up(Keys.CONTROL).perform()
         time.sleep(0.5)
 
-        # Escribir el DTE en el cuadro de búsqueda
+        # Escribir el DTE
         actions.send_keys(dte_buscado).perform()
-        print("  ⏳ Escribiendo DTE en búsqueda...")
         time.sleep(1)
 
-        # Presionar Enter para buscar
+        # Presionar Enter
         actions.send_keys(Keys.ENTER).perform()
-        print("  ⏳ Esperando respuesta del frontend...")
-        time.sleep(3)
+        time.sleep(2)
 
-        # Cerrar el cuadro de búsqueda
+        # Cerrar búsqueda
         actions.send_keys(Keys.ESCAPE).perform()
         time.sleep(0.5)
 
-        # Intentar encontrar la fila que contiene el DTE
+        # Buscar la celda con el DTE
         try:
             celda_dte = driver.find_element(
                 By.XPATH, f"//td[contains(normalize-space(.), '{dte_buscado}')]"
             )
-
-            # Obtener la fila completa
             fila = celda_dte.find_element(By.XPATH, "./ancestor::tr[@role='row']")
 
             # Hacer scroll a la fila
@@ -85,11 +110,20 @@ def buscar_dte_en_tabla(driver, dte_buscado):
             )
             time.sleep(0.5)
 
-            print(f"✅ DTE encontrado en la tabla")
-            return fila
+            # Obtener el índice
+            filas = driver.find_elements(
+                By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
+            )
+            for idx, f in enumerate(filas):
+                if f == fila:
+                    print(f"✅ DTE encontrado en índice: {idx}")
+                    return idx
 
-        except Exception as e:
-            print(f"❌ DTE no encontrado en la tabla: {e}")
+            print("⚠️ DTE encontrado pero no se pudo determinar el índice")
+            return None
+
+        except Exception:
+            print(f"❌ DTE no encontrado en la tabla")
             return None
 
     except Exception as e:
@@ -97,88 +131,9 @@ def buscar_dte_en_tabla(driver, dte_buscado):
         return None
 
 
-def buscar_fecha_limite_en_tabla(driver, fecha_buscada):
-    """
-    Busca una fecha específica en la tabla usando Ctrl+F para encontrar el límite.
-    Retorna el índice de la fila si lo encuentra, o None si no lo encuentra.
-    """
-    try:
-        print(f"\n🔍 Buscando fecha límite: {fecha_buscada}")
-
-        # Abrir búsqueda con Ctrl+F
-        actions = ActionChains(driver)
-        actions.key_down(Keys.CONTROL).send_keys("f").key_up(Keys.CONTROL).perform()
-        time.sleep(0.5)
-
-        # Escribir la fecha en el cuadro de búsqueda
-        actions.send_keys(fecha_buscada).perform()
-        print("  ⏳ Escribiendo fecha en búsqueda...")
-        time.sleep(1)
-
-        # Presionar Enter para buscar
-        actions.send_keys(Keys.ENTER).perform()
-        print("  ⏳ Esperando respuesta del frontend...")
-        time.sleep(3)
-
-        # Cerrar el cuadro de búsqueda
-        actions.send_keys(Keys.ESCAPE).perform()
-        time.sleep(0.5)
-
-        # Intentar encontrar la fila que contiene la fecha
-        try:
-            celda_fecha = driver.find_element(
-                By.XPATH, f"//td[contains(normalize-space(.), '{fecha_buscada}')]"
-            )
-
-            # Obtener la fila completa
-            fila = celda_fecha.find_element(By.XPATH, "./ancestor::tr[@role='row']")
-
-            # Hacer scroll a la fila
-            driver.execute_script(
-                "arguments[0].scrollIntoView({block: 'center'});", fila
-            )
-            time.sleep(0.5)
-
-            # Obtener el índice de la fila
-            filas = driver.find_elements(
-                By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
-            )
-            for idx, f in enumerate(filas):
-                if f == fila:
-                    print(f"✅ Fecha límite encontrada en índice {idx}")
-                    return idx
-
-            print(f"⚠️ No se pudo determinar el índice de la fecha")
-            return None
-
-        except Exception as e:
-            print(f"❌ Fecha límite no encontrada en la tabla: {e}")
-            return None
-
-    except Exception as e:
-        print(f"❌ Error al buscar fecha límite: {e}")
-        return None
-
-
-def obtener_indice_fila(driver, fila):
-    """
-    Obtiene el índice de una fila dentro de la tabla
-    """
-    try:
-        filas = driver.find_elements(
-            By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
-        )
-        for idx, f in enumerate(filas):
-            if f == fila:
-                return idx
-        return None
-    except:
-        return None
-
-
 def extraer_dte_de_fila(fila):
     """
-    Busca en la fila una celda que contenga el texto del DTE
+    Extrae el DTE de una fila
     """
     try:
         celda = fila.find_element(
@@ -194,15 +149,12 @@ def extraer_dte_de_fila(fila):
 
 def extraer_fecha_de_fila(fila):
     """
-    Busca en la fila una celda que contenga la fecha
-    Asume que la fecha está en un formato como "10/11/2025 08:13 am"
+    Extrae la fecha de una fila
     """
     try:
-        # Buscar todas las celdas de la fila
         celdas = fila.find_elements(By.TAG_NAME, "td")
         for celda in celdas:
             texto = celda.text.strip()
-            # Buscar patrón de fecha (dd/mm/yyyy)
             if "/" in texto and any(char.isdigit() for char in texto):
                 return texto
     except Exception:
@@ -240,7 +192,7 @@ def click_ver_en_dropdown(driver, fila, wait):
     Hace click en la opción 'Ver' del dropdown de acciones
     """
     try:
-        # Buscar el menú dropdown visible
+
         def obtener_menu_visible(_):
             menus = fila.find_elements(
                 By.XPATH, ".//ul[contains(@class,'dropdown-menu')]"
@@ -250,7 +202,6 @@ def click_ver_en_dropdown(driver, fila, wait):
 
         menu = WebDriverWait(driver, 5).until(obtener_menu_visible)
 
-        # Buscar el botón "Ver"
         boton_ver = menu.find_element(
             By.XPATH, ".//a[@class='btn-modal' and contains(., 'Ver')]"
         )
@@ -279,19 +230,14 @@ def click_impresion_en_modal(driver, wait):
     Hace click en el botón 'Impresión' del modal flotante
     """
     try:
-        # Esperar a que aparezca el modal
         print("  ⏳ Esperando que aparezca el modal...")
         modal = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CLASS_NAME, "modal-content"))
         )
 
         print("  ✅ Modal de detalles abierto")
-
-        # Esperar a que el contenido del modal se cargue
-        print("  ⏳ Esperando que se cargue el contenido del modal...")
         time.sleep(2)
 
-        # Esperar a que el footer esté visible
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "modal-footer"))
@@ -300,10 +246,9 @@ def click_impresion_en_modal(driver, wait):
         except:
             print("  ⚠️ Footer del modal no encontrado, continuando...")
 
-        # Buscar el botón de impresión
         boton_impresion = None
 
-        # Estrategia 1: Buscar por onclick que contiene openDteUrl
+        # Buscar botón de impresión
         try:
             boton_impresion = driver.find_element(
                 By.XPATH,
@@ -313,7 +258,6 @@ def click_impresion_en_modal(driver, wait):
         except:
             pass
 
-        # Estrategia 2: Buscar solo por clase print-invoice
         if not boton_impresion:
             try:
                 boton_impresion = driver.find_element(
@@ -323,7 +267,6 @@ def click_impresion_en_modal(driver, wait):
             except:
                 pass
 
-        # Estrategia 3: Buscar por clase y data-href en el modal
         if not boton_impresion:
             try:
                 boton_impresion = modal.find_element(
@@ -334,7 +277,6 @@ def click_impresion_en_modal(driver, wait):
             except:
                 pass
 
-        # Estrategia 4: Buscar por texto "Impresión"
         if not boton_impresion:
             try:
                 footer = driver.find_element(By.CLASS_NAME, "modal-footer")
@@ -348,13 +290,11 @@ def click_impresion_en_modal(driver, wait):
         if not boton_impresion:
             raise Exception("No se pudo encontrar el botón de Impresión en el modal")
 
-        # Hacer scroll al botón
         driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center'});", boton_impresion
         )
         time.sleep(0.5)
 
-        # Intentar hacer click
         try:
             boton_impresion.click()
         except:
@@ -384,7 +324,7 @@ def cambiar_a_nueva_ventana(driver, ventana_original):
         return False
 
 
-def descargar_pdf_y_json(driver, wait, carpeta_descargas, nombre_base):
+def descargar_pdf_y_json(driver, wait):
     """
     Descarga PDF y JSON de la ventana actual
     """
@@ -439,16 +379,15 @@ def descargar_pdf_y_json(driver, wait, carpeta_descargas, nombre_base):
 
 def cerrar_modal_si_esta_abierto(driver):
     """
-    Cierra el modal si está abierto después de regresar a la ventana principal
+    Cierra el modal si está abierto
     """
     try:
-        # Verificar si hay un modal abierto
         modal = driver.find_element(By.CLASS_NAME, "modal-content")
 
         if modal.is_displayed():
             print("  🔍 Modal detectado abierto, cerrando...")
 
-            # Estrategia 1: Buscar botón "Cerrar" en el footer
+            # Intentar cerrar con botón "Cerrar"
             try:
                 boton_cerrar = driver.find_element(
                     By.XPATH,
@@ -461,7 +400,7 @@ def cerrar_modal_si_esta_abierto(driver):
             except:
                 pass
 
-            # Estrategia 2: Buscar botón con data-dismiss="modal"
+            # Intentar con data-dismiss
             try:
                 boton_cerrar = driver.find_element(
                     By.XPATH,
@@ -474,7 +413,7 @@ def cerrar_modal_si_esta_abierto(driver):
             except:
                 pass
 
-            # Estrategia 3: Buscar la X de cerrar
+            # Intentar con botón X
             try:
                 boton_x = driver.find_element(
                     By.XPATH,
@@ -487,7 +426,7 @@ def cerrar_modal_si_esta_abierto(driver):
             except:
                 pass
 
-            # Estrategia 4: Presionar ESC
+            # Intentar con ESC
             try:
                 actions = ActionChains(driver)
                 actions.send_keys(Keys.ESCAPE).perform()
@@ -500,7 +439,6 @@ def cerrar_modal_si_esta_abierto(driver):
             print("  ⚠️ No se pudo cerrar el modal automáticamente")
             return False
     except:
-        # No hay modal abierto
         return True
 
 
@@ -514,47 +452,49 @@ def procesar_registro_con_modal(driver, fila, idx, ventana_principal, wait):
     if dte:
         print(f"  🏷️ DTE detectado: {dte}")
     else:
-        print("  ⚠️ No se pudo detectar DTE en la fila. Se usará índice como fallback.")
+        print("  ⚠️ No se pudo detectar DTE en la fila")
 
     try:
-        # Re-obtener la fila para evitar stale elements
+        # Re-obtener la fila
         driver.switch_to.window(ventana_principal)
         filas = driver.find_elements(
             By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
         )
         if idx >= len(filas):
-            print("  ⚠️ La fila ya no está disponible.")
+            print("  ⚠️ La fila ya no está disponible")
             return False
         fila = filas[idx]
 
-        # Hacer scroll a la fila
         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", fila)
         time.sleep(0.3)
 
-        # 1. Click en Acciones
+        # Click en Acciones
         if not click_acciones_fila(driver, fila):
             return False
 
-        # 2. Click en Ver
+        # Click en Ver
         if not click_ver_en_dropdown(driver, fila, wait):
             return False
 
-        # 3. Click en Impresión del modal
+        # Click en Impresión del modal
         if not click_impresion_en_modal(driver, wait):
             return False
 
-        # 4. Cambiar a ventana de impresión
+        # Cambiar a ventana de impresión
         if not cambiar_a_nueva_ventana(driver, ventana_principal):
             return False
 
         time.sleep(0.5)
 
-        # 5. Descargar archivos
-        if descargar_pdf_y_json(driver, wait, DOWNLOAD_FOLDER, dte):
+        # Descargar archivos
+        if descargar_pdf_y_json(driver, wait):
             print("  ✅ Descarga completada correctamente")
             ultimo_dte_exitoso = dte if dte else f"registro_{idx + 1}"
 
-            # Esperar a que terminen las descargas
+            # Guardar inmediatamente el último exitoso
+            if dte:
+                guardar_ultimo_exitoso(dte)
+
             print("  ⏳ Esperando a que se completen las descargas...")
             time.sleep(2)
 
@@ -564,21 +504,17 @@ def procesar_registro_con_modal(driver, fila, idx, ventana_principal, wait):
             driver.switch_to.window(ventana_principal)
             print("  ✅ Ventana cerrada, recursos liberados")
 
-            # Cerrar modal si está abierto
             cerrar_modal_si_esta_abierto(driver)
 
             return True
         else:
-            # Esperar un poco incluso si falla
             time.sleep(1)
 
-            # Cerrar ventana de impresión
             print("  🔒 Cerrando ventana de descarga...")
             driver.close()
             driver.switch_to.window(ventana_principal)
             print("  ✅ Ventana cerrada")
 
-            # Cerrar modal si está abierto incluso si falla la descarga
             cerrar_modal_si_esta_abierto(driver)
 
             return False
@@ -586,7 +522,6 @@ def procesar_registro_con_modal(driver, fila, idx, ventana_principal, wait):
     except Exception as e:
         print(f"  ❌ Error al procesar registro: {e}")
         try:
-            # Cerrar TODAS las ventanas extras que puedan estar abiertas
             if len(driver.window_handles) > 1:
                 print("  🔒 Cerrando ventanas adicionales por error...")
                 for handle in driver.window_handles:
@@ -596,23 +531,20 @@ def procesar_registro_con_modal(driver, fila, idx, ventana_principal, wait):
                         print("  ✅ Ventana adicional cerrada")
             driver.switch_to.window(ventana_principal)
 
-            # Cerrar modal si está abierto después de un error
             cerrar_modal_si_esta_abierto(driver)
         except:
             pass
         return False
 
 
-def guardar_reporte_json():
+def guardar_reporte_fallidos():
     """
-    Guarda los reportes JSON al finalizar
+    Guarda el reporte de registros fallidos
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Guardar registros fallidos
     if registros_fallidos:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         archivo_fallidos = os.path.join(
-            DOWNLOAD_FOLDER, f"reporte_descarga_fallidas_{timestamp}.json"
+            DOWNLOAD_FOLDER, f"reporte_fallidos_{timestamp}.json"
         )
         with open(archivo_fallidos, "w", encoding="utf-8") as f:
             json.dump(
@@ -626,23 +558,6 @@ def guardar_reporte_json():
                 ensure_ascii=False,
             )
         print(f"\n📄 Reporte de fallidos guardado: {archivo_fallidos}")
-
-    # Guardar último DTE exitoso
-    if ultimo_dte_exitoso:
-        archivo_ultimo = os.path.join(
-            DOWNLOAD_FOLDER, f"ultimo_dte_exitoso_{timestamp}.json"
-        )
-        with open(archivo_ultimo, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "fecha_reporte": datetime.now().isoformat(),
-                    "ultimo_dte": ultimo_dte_exitoso,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        print(f"📄 Último DTE exitoso guardado: {archivo_ultimo}")
 
 
 try:
@@ -709,7 +624,7 @@ try:
     time.sleep(2)
     print("📍 Estamos en la página de facturas")
 
-    # Filtro de fecha - ÚLTIMOS 7 DÍAS
+    # Filtro de fecha - HOY
     print("\n🔄 Abriendo filtro de fecha...")
     filtro_fecha = wait.until(EC.element_to_be_clickable((By.ID, "sell_date_filter")))
     filtro_fecha.click()
@@ -717,147 +632,137 @@ try:
 
     time.sleep(2)
     try:
-        ultimos_7_dias = wait.until(
+        hoy = wait.until(
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
-                    "//li[contains(text(), 'Los últimos 7 días')] | //a[contains(text(), 'Los últimos 7 días')] | //span[contains(text(), 'Los últimos 7 días')]",
+                    "//li[contains(text(), 'Hoy')] | //a[contains(text(), 'Hoy')] | //span[contains(text(), 'Hoy')]",
                 )
             )
         )
-        ultimos_7_dias.click()
-        print("✅ Seleccionado 'Los últimos 7 días'")
+        hoy.click()
+        print("✅ Seleccionado 'Hoy'")
     except:
-        print("⚠️ No se encontró 'Los últimos 7 días'. Continuando...")
+        print("⚠️ No se encontró 'Hoy'. Continuando...")
 
     time.sleep(3)
 
-    # Mostrar 200 registros por página
-    print("\n🔄 Cambiando filtro a 200 registros por página...")
+    # Mostrar TODOS los registros
+    print("\n🔄 Cambiando filtro a mostrar TODOS los registros...")
     select_length = wait.until(
         EC.presence_of_element_located((By.NAME, "sell_table_length"))
     )
     try:
-        Select(select_length).select_by_value("200")
-        print("✅ Seleccionado 200 registros por página")
+        # Buscar la opción "Todos" o "-1" como valor
+        select_obj = Select(select_length)
+        opciones = [option.get_attribute("value") for option in select_obj.options]
+        print(f"  📋 Opciones disponibles: {opciones}")
+
+        # Intentar seleccionar "Todos" (puede ser "-1" o "all")
+        if "-1" in opciones:
+            Select(select_length).select_by_value("-1")
+            print("✅ Seleccionado mostrar TODOS los registros")
+        elif "all" in opciones:
+            Select(select_length).select_by_value("all")
+            print("✅ Seleccionado mostrar TODOS los registros")
+        else:
+            # Si no existe "Todos", usar el valor más alto
+            valores_numericos = [int(v) for v in opciones if v.isdigit()]
+            if valores_numericos:
+                max_valor = str(max(valores_numericos))
+                Select(select_length).select_by_value(max_valor)
+                print(
+                    f"✅ Seleccionado mostrar {max_valor} registros (máximo disponible)"
+                )
+            else:
+                print("⚠️ No se pudo determinar cómo mostrar todos los registros")
     except Exception as e:
         print(f"  ❌ No se pudo cambiar el tamaño de página: {e}")
-        driver.quit()
-        exit(1)
 
     # Dar tiempo a que carguen los registros
     print("⏳ Esperando 5 segundos a que carguen los registros...")
     time.sleep(5)
     print("✅ Registros cargados")
 
-    # ⚠️ PASO 1: Buscar el DTE inicial
-    print("\n" + "=" * 60)
-    print("🔍 BUSCANDO DTE INICIAL")
-    print("=" * 60)
-    print(f"DTE a buscar: {DTE_INICIAL}")
-
-    fila_dte_inicial = buscar_dte_en_tabla(driver, DTE_INICIAL)
-
-    if not fila_dte_inicial:
-        print(f"\n❌ ERROR: No se encontró el DTE inicial {DTE_INICIAL}")
-        print("No se puede continuar con el procesamiento.")
-        driver.quit()
-        exit(1)
-
-    indice_dte_inicial = obtener_indice_fila(driver, fila_dte_inicial)
-    if indice_dte_inicial is None:
-        print(f"\n❌ ERROR: No se pudo determinar el índice del DTE inicial")
-        driver.quit()
-        exit(1)
-
-    print(f"✅ DTE inicial encontrado en índice: {indice_dte_inicial}")
-
-    # ⚠️ PASO 2: Buscar la fecha límite
-    print("\n" + "=" * 60)
-    print("🔍 BUSCANDO FECHA LÍMITE")
-    print("=" * 60)
-    print(f"Fecha límite: {FECHA_LIMITE}")
-
-    indice_fecha_limite = buscar_fecha_limite_en_tabla(driver, FECHA_LIMITE)
-
-    if indice_fecha_limite is None:
-        print(f"⚠️ No se encontró la fecha límite exacta")
-        print("Se procesarán todos los registros desde el DTE inicial hasta el final")
-        # Obtener total de filas
+    # Hacer scroll al final de la tabla
+    print("\n🔄 Desplazando al final de la página...")
+    try:
+        # Obtener todas las filas
         filas = driver.find_elements(
             By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
         )
-        indice_fecha_limite = len(filas)  # Procesar hasta el final
-    else:
-        print(f"✅ Fecha límite encontrada en índice: {indice_fecha_limite}")
-        # El límite es ANTES de la fecha límite (no incluir el 10/11/2025)
-        print(f"⚠️ Se detendrá ANTES del índice {indice_fecha_limite}")
-        print(f"   (No se descargará la fecha {FECHA_LIMITE} ni registros posteriores)")
+        if filas:
+            ultima_fila = filas[-1]
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", ultima_fila
+            )
+            time.sleep(1)
+            print(f"✅ Desplazado al final de la tabla ({len(filas)} registros)")
+        else:
+            print("⚠️ No se encontraron registros en la tabla")
+    except Exception as e:
+        print(f"⚠️ Error al hacer scroll: {e}")
 
-    # ⚠️ PASO 3: Determinar el rango de procesamiento
-    print("\n" + "=" * 60)
-    print("📋 RANGO DE PROCESAMIENTO")
-    print("=" * 60)
+    # Cargar el último DTE exitoso
+    ultimo_dte_cargado = cargar_ultimo_exitoso()
 
     # Obtener todas las filas
     filas = driver.find_elements(
         By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
     )
     total_filas = len(filas)
-    print(f"Total de registros en tabla: {total_filas}")
+    print(f"\n📊 Total de registros en tabla: {total_filas}")
 
-    # La tabla está ordenada de MÁS RECIENTE (índice 0) a MÁS ANTIGUO (índice N)
-    # Debemos ir HACIA ARRIBA (índices menores) desde el DTE inicial
-
-    # Calcular el rango - IR HACIA ARRIBA desde el DTE inicial
-    indice_inicio = (
-        indice_dte_inicial - 1
-    )  # Empezar desde el ANTERIOR al DTE inicial (hacia arriba/más reciente)
-
-    # El índice fin es donde está la fecha límite (o el inicio de la tabla si no se encuentra)
-    if indice_fecha_limite is not None:
-        indice_fin = (
-            indice_fecha_limite + 1
-        )  # Detenerse DESPUÉS de la fecha límite (no incluirla)
-    else:
-        indice_fin = 0  # Si no se encuentra la fecha límite, ir hasta el inicio
-
-    # Validar que hay registros para procesar
-    if indice_inicio < indice_fin:
-        print(
-            f"\n⚠️ No hay registros para procesar entre el DTE inicial y la fecha límite"
-        )
-        print(f"   Índice DTE inicial: {indice_dte_inicial}")
-        print(f"   Índice inicio (anterior al DTE): {indice_inicio}")
-        print(
-            f"   Índice fecha límite: {indice_fecha_limite if indice_fecha_limite is not None else 'N/A'}"
-        )
-        print(f"   Índice fin: {indice_fin}")
+    if total_filas == 0:
+        print("⚠️ No hay registros para procesar hoy")
         driver.quit()
         exit(0)
 
-    registros_a_procesar = indice_inicio - indice_fin + 1
+    # Determinar desde dónde empezar
+    indice_inicio = None
+
+    if ultimo_dte_cargado:
+        print(f"\n🔍 Buscando último DTE procesado: {ultimo_dte_cargado}")
+        indice_ultimo = buscar_dte_con_ctrl_f(driver, ultimo_dte_cargado)
+
+        if indice_ultimo is not None:
+            # Empezar desde el ANTERIOR al último procesado (hacia arriba/más reciente)
+            indice_inicio = indice_ultimo - 1
+            print(
+                f"✅ Se continuará desde el índice {indice_inicio} (anterior al último procesado)"
+            )
+        else:
+            print("⚠️ No se encontró el último DTE procesado")
+            print("   Se procesará desde el final de la tabla")
+            indice_inicio = total_filas - 1
+    else:
+        # Si no hay último exitoso, empezar desde el final
+        indice_inicio = total_filas - 1
+        print(f"📍 Comenzando desde el final de la tabla (índice {indice_inicio})")
+
+    # Validar que hay registros para procesar
+    if indice_inicio < 0:
+        print("⚠️ No hay registros nuevos para procesar")
+        driver.quit()
+        exit(0)
+
+    registros_a_procesar = indice_inicio + 1
     print(f"\n✅ Se procesarán {registros_a_procesar} registros:")
-    print(
-        f"   Desde índice: {indice_inicio} (anterior al DTE {DTE_INICIAL}) - HACIA ARRIBA"
-    )
-    print(f"   Hasta índice: {indice_fin} (después de {FECHA_LIMITE})")
+    print(f"   Desde índice: {indice_inicio} (último registro) - HACIA ARRIBA")
+    print(f"   Hasta índice: 0 (primer registro)")
     print(f"   Dirección: ⬆️ Hacia registros más recientes (índices menores)")
 
-    # ⚠️ PASO 4: Procesamiento de registros
+    # Procesamiento de registros
     print("\n" + "=" * 60)
-    print("🚀 INICIANDO PROCESAMIENTO DE REGISTROS")
+    print("🚀 INICIANDO PROCESAMIENTO DE REGISTROS DE HOY")
     print("=" * 60)
 
     ventana_principal = driver.current_window_handle
     registros_procesados = 0
     registros_exitosos = 0
 
-    # Procesar desde indice_inicio HACIA ABAJO hasta indice_fin (hacia registros más recientes)
-    # Es decir, de índice mayor a índice menor
-    for idx in range(
-        indice_inicio, indice_fin - 1, -1
-    ):  # El -1 hace que vaya hacia abajo
+    # Procesar desde indice_inicio hacia arriba (índices menores)
+    for idx in range(indice_inicio, -1, -1):
         try:
             driver.switch_to.window(ventana_principal)
             registros_procesados += 1
@@ -866,7 +771,7 @@ try:
                 f"\n📄 Procesando registro {registros_procesados}/{registros_a_procesar} (índice {idx}) ..."
             )
 
-            # Re-obtener las filas para evitar stale elements
+            # Re-obtener las filas
             filas = driver.find_elements(
                 By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
             )
@@ -874,16 +779,6 @@ try:
                 print(f"  ⚠️ Registro {idx} ya no está disponible")
                 continue
             fila = filas[idx]
-
-            # Verificar fecha antes de procesar
-            fecha_fila = extraer_fecha_de_fila(fila)
-            if fecha_fila:
-                print(f"  📅 Fecha del registro: {fecha_fila}")
-                # Verificar si llegamos a la fecha límite
-                if FECHA_LIMITE in fecha_fila:
-                    print(f"\n🛑 DETENIDO: Se alcanzó la fecha límite ({FECHA_LIMITE})")
-                    print(f"   Este registro NO se descargará")
-                    break
 
             # Procesar con el flujo de modal
             exito = procesar_registro_con_modal(
@@ -948,33 +843,28 @@ try:
     print(f"🎉 PROCESAMIENTO COMPLETADO")
     print(f"{'='*60}")
     print(f"📊 RESUMEN:")
-    print(f"   DTE inicial: {DTE_INICIAL} (índice {indice_dte_inicial})")
-    print(
-        f"   Fecha límite: {FECHA_LIMITE} (índice {indice_fecha_limite if indice_fecha_limite else 'N/A'})"
-    )
-    print(
-        f"   Rango procesado: desde índice {indice_inicio} hasta índice {indice_fin} (⬆️ hacia arriba)"
-    )
     print(f"   Total de registros procesados: {registros_procesados}")
     print(f"   ✅ Registros exitosos: {registros_exitosos}")
     print(f"   ❌ Registros fallidos: {len(registros_fallidos)}")
+    if ultimo_dte_exitoso:
+        print(f"   🏷️ Último DTE exitoso: {ultimo_dte_exitoso}")
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
 
-    # Guardar reportes JSON
-    guardar_reporte_json()
+    # Guardar reporte de fallidos
+    guardar_reporte_fallidos()
 
     input("\nPresiona Enter para cerrar el navegador...")
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
-    guardar_reporte_json()
+    guardar_reporte_fallidos()
     print("📊 Reportes guardados antes de salir")
 
 except Exception as e:
     print(f"❌ Error: {e}")
     print("\n📊 Detalles del error:")
     traceback.print_exc()
-    guardar_reporte_json()
+    guardar_reporte_fallidos()
 
 finally:
     driver.quit()
