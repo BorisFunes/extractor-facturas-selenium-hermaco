@@ -1,0 +1,257 @@
+============================================================================
+COMANDOS DE POWERSHELL PARA INSTALACIÓN
+Sistema de Descarga de Facturas Hermaco ERP
+============================================================================
+
+IMPORTANTE: Ejecutar PowerShell como Administrador
+           Click derecho en PowerShell → "Ejecutar como administrador"
+
+============================================================================
+OPCIÓN 1: INSTALACIÓN AUTOMATIZADA (RECOMENDADO)
+============================================================================
+
+# Navegar al directorio del proyecto
+cd "C:\Dashboard\extractor de facturas\extractor-facturas-selenium-hermaco"
+
+# Permitir ejecución de scripts (si es necesario)
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Ejecutar script de instalación automatizada
+.\INSTALACION_COMANDOS.ps1
+
+============================================================================
+OPCIÓN 2: INSTALACIÓN MANUAL (PASO A PASO)
+============================================================================
+
+--- PASO 1: VERIFICAR PYTHON ---
+
+python --version
+
+# Si Python NO está instalado:
+# 1. Descargar de: https://www.python.org/downloads/
+# 2. Instalar Python 3.11+ (IMPORTANTE: Marcar "Add Python to PATH")
+# 3. Reiniciar PowerShell
+# 4. Verificar nuevamente con: python --version
+
+--- PASO 2: VERIFICAR PIP ---
+
+pip --version
+
+# Si pip no está instalado:
+python -m ensurepip --upgrade
+
+--- PASO 3: ACTUALIZAR PIP ---
+
+python -m pip install --upgrade pip
+
+--- PASO 4: NAVEGAR AL DIRECTORIO DEL PROYECTO ---
+
+cd "C:\Dashboard\extractor de facturas\extractor-facturas-selenium-hermaco"
+
+--- PASO 5: INSTALAR DEPENDENCIAS DESDE REQUIREMENTS.TXT ---
+
+pip install -r requirements.txt
+
+# Esto instalará:
+#   - selenium==4.15.2
+#   - webdriver-manager==4.0.1
+#   - urllib3==2.1.0
+#   - certifi==2023.11.17
+
+--- PASO 6: VERIFICAR INSTALACIÓN ---
+
+python test_instalacion.py
+
+--- PASO 7: INSTALAR GOOGLE CHROME (OBLIGATORIO) ---
+
+# Chrome NO se instala con pip, debes instalarlo manualmente:
+# 1. Descargar de: https://www.google.com/chrome/
+# 2. Ejecutar el instalador
+# 3. Seguir las instrucciones
+
+# IMPORTANTE: Chrome es OBLIGATORIO incluso en modo headless
+
+============================================================================
+COMANDOS DE INSTALACIÓN INDIVIDUAL (SI ES NECESARIO)
+============================================================================
+
+# Instalar Selenium
+pip install selenium==4.15.2
+
+# Instalar WebDriver Manager
+pip install webdriver-manager==4.0.1
+
+# Instalar urllib3
+pip install urllib3==2.1.0
+
+# Instalar certifi
+pip install certifi==2023.11.17
+
+# Instalar todas las últimas versiones (sin versión específica)
+pip install selenium webdriver-manager urllib3 certifi
+
+============================================================================
+COMANDOS DE VERIFICACIÓN
+============================================================================
+
+# Verificar versión de Python
+python --version
+
+# Verificar versión de pip
+pip --version
+
+# Listar paquetes instalados
+pip list
+
+# Ver información de un paquete específico
+pip show selenium
+
+# Verificar Chrome instalado (PowerShell)
+Test-Path "C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+# Verificar Chrome instalado (alternativa)
+Test-Path "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+
+============================================================================
+COMANDOS DE ACTUALIZACIÓN
+============================================================================
+
+# Actualizar pip
+python -m pip install --upgrade pip
+
+# Actualizar un paquete específico
+pip install --upgrade selenium
+
+# Actualizar todos los paquetes del requirements.txt
+pip install --upgrade -r requirements.txt
+
+============================================================================
+COMANDOS DE DESINSTALACIÓN (SI ES NECESARIO)
+============================================================================
+
+# Desinstalar un paquete específico
+pip uninstall selenium
+
+# Desinstalar múltiples paquetes
+pip uninstall selenium webdriver-manager urllib3 certifi
+
+# Desinstalar todos los paquetes del requirements.txt
+pip uninstall -r requirements.txt -y
+
+============================================================================
+SOLUCIÓN DE PROBLEMAS
+============================================================================
+
+--- Problema: "python no se reconoce como comando" ---
+
+# Solución 1: Agregar Python al PATH manualmente
+# 1. Panel de Control → Sistema → Configuración avanzada del sistema
+# 2. Variables de entorno → Path → Editar
+# 3. Agregar: C:\Users\TU_USUARIO\AppData\Local\Programs\Python\Python311
+# 4. Reiniciar PowerShell
+
+# Solución 2: Reinstalar Python marcando "Add Python to PATH"
+
+--- Problema: "pip no se reconoce como comando" ---
+
+python -m pip --version
+python -m pip install --upgrade pip
+
+--- Problema: Error de permisos al instalar paquetes ---
+
+# Ejecutar PowerShell como Administrador
+# O instalar solo para el usuario actual:
+pip install --user -r requirements.txt
+
+--- Problema: Error SSL/TLS al descargar paquetes ---
+
+# Actualizar certifi
+pip install --upgrade certifi
+
+# O usar --trusted-host
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+
+--- Problema: Conflictos de versiones ---
+
+# Crear entorno virtual (recomendado para evitar conflictos)
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+============================================================================
+EJECUCIÓN DEL SISTEMA
+============================================================================
+
+# Después de instalar todo, ejecutar:
+
+# 1. Verificar instalación
+python test_instalacion.py
+
+# 2. Ejecutar el orquestador
+python Orquestador.py
+
+# 3. Ejecutar scripts individuales (opcional)
+python "descargador_diario copy.py"
+python descargadordegastos.py
+python descargadorderemisiones.py
+
+============================================================================
+VERIFICACIÓN COMPLETA
+============================================================================
+
+# Script completo de verificación (copiar y pegar todo junto):
+
+Write-Host "Verificando instalación..." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Python:" -ForegroundColor Cyan
+python --version
+Write-Host ""
+Write-Host "pip:" -ForegroundColor Cyan
+pip --version
+Write-Host ""
+Write-Host "Paquetes instalados:" -ForegroundColor Cyan
+pip list | Select-String -Pattern "selenium|webdriver-manager|urllib3|certifi"
+Write-Host ""
+Write-Host "Chrome:" -ForegroundColor Cyan
+if (Test-Path "C:\Program Files\Google\Chrome\Application\chrome.exe") {
+    Write-Host "✅ Chrome instalado" -ForegroundColor Green
+} else {
+    Write-Host "❌ Chrome NO instalado" -ForegroundColor Red
+}
+Write-Host ""
+Write-Host "Ejecutando test de instalación..." -ForegroundColor Cyan
+python test_instalacion.py
+
+============================================================================
+RECURSOS ADICIONALES
+============================================================================
+
+Documentación del proyecto:
+  - README.md
+  - GUIA_INSTALACION_WINDOWS_SERVER.md
+  - FAQ.md
+  - RESUMEN_CAMBIOS.md
+
+Sitios web útiles:
+  - Python: https://www.python.org/
+  - Chrome: https://www.google.com/chrome/
+  - Selenium: https://www.selenium.dev/
+  - pip: https://pip.pypa.io/
+
+============================================================================
+NOTAS IMPORTANTES
+============================================================================
+
+✅ Python 3.11+ es recomendado
+✅ Todas las dependencias están en requirements.txt
+✅ Google Chrome es OBLIGATORIO (aunque sea modo headless)
+✅ ChromeDriver se descarga automáticamente (NO instalar manualmente)
+✅ Ejecutar PowerShell como Administrador para evitar problemas
+
+❌ NO usar Python 2.x (no compatible)
+❌ NO instalar ChromeDriver manualmente
+❌ NO olvidar instalar Chrome
+
+============================================================================
+FIN DEL DOCUMENTO
+============================================================================

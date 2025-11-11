@@ -1,0 +1,14 @@
+# Dependencias del proyecto: Extractor de Facturas Hermaco ERP
+# Instalación: pip install -r requirements.txt
+
+# Selenium - Automatización de navegadores web
+selenium==4.15.2
+
+# WebDriver Manager - Gestión automática de drivers
+webdriver-manager==4.0.1
+
+# urllib3 - Cliente HTTP
+urllib3==2.1.0
+
+# certifi - Certificados SSL
+certifi==2023.11.17

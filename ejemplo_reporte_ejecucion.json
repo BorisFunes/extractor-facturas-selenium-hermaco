@@ -1,0 +1,59 @@
+{
+  "fecha_inicio": "2025-11-11T08:00:00.123456",
+  "fecha_fin": "2025-11-11T08:15:30.654321",
+  "duracion_total_segundos": 930.53,
+  "duracion_total_formateada": "930.53s (15.51m)",
+  "resumen": {
+    "total_scripts": 3,
+    "exitosos": 3,
+    "fallidos": 0,
+    "tasa_exito": "100.0%"
+  },
+  "scripts_ejecutados": [
+    {
+      "orden": 1,
+      "nombre": "Descargador de Facturas de Ayer",
+      "archivo": "descargador_diario copy.py",
+      "estado": "exitoso",
+      "duracion_segundos": 245.67,
+      "duracion_formateada": "245.67s",
+      "carpeta_descargas": "descargas_diarias",
+      "archivos_descargados": {
+        "pdfs": 45,
+        "jsons": 45,
+        "total": 90
+      },
+      "error": null
+    },
+    {
+      "orden": 2,
+      "nombre": "Descargador de Gastos",
+      "archivo": "descargadordegastos.py",
+      "estado": "exitoso",
+      "duracion_segundos": 380.22,
+      "duracion_formateada": "380.22s",
+      "carpeta_descargas": "descargas_gastos",
+      "archivos_descargados": {
+        "pdfs": 128,
+        "jsons": 128,
+        "total": 256
+      },
+      "error": null
+    },
+    {
+      "orden": 3,
+      "nombre": "Descargador de Remisiones",
+      "archivo": "descargadorderemisiones.py",
+      "estado": "exitoso",
+      "duracion_segundos": 294.64,
+      "duracion_formateada": "294.64s",
+      "carpeta_descargas": "descargas_remisiones",
+      "archivos_descargados": {
+        "pdfs": 67,
+        "jsons": 67,
+        "total": 134
+      },
+      "error": null
+    }
+  ]
+}

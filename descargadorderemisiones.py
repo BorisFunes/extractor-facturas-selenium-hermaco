@@ -31,6 +31,13 @@ prefs = {
 }
 chrome_options.add_experimental_option("prefs", prefs)
 
+# Modo headless para servidor sin interfaz gráfica
+chrome_options.add_argument("--headless=new")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920,1080")
+
 # Inicializar el navegador
 driver = webdriver.Chrome(
     service=Service(ChromeDriverManager().install()), options=chrome_options
@@ -130,13 +137,13 @@ def buscar_correlativo_con_ctrl_f(driver, correlativo_buscado):
             filas = driver.find_elements(
                 By.XPATH, "//table[@id='remission_notes_table']//tbody/tr[@role='row']"
             )
-            
+
             for idx, fila in enumerate(filas):
                 correlativo_fila = extraer_correlativo_de_fila(fila)
                 if correlativo_fila == correlativo_buscado:
                     print(f"  ✅ Correlativo encontrado en la fila {idx + 1}")
                     return idx
-            
+
             print(f"  ⚠️ Correlativo no encontrado en la tabla")
             return None
 
@@ -585,7 +592,7 @@ def procesar_registro_con_reintentos(
                     driver, wait, DOWNLOAD_FOLDER, correlativo, idx + 1
                 ):
                     print("  ✅ Descargas iniciadas correctamente")
-                    
+
                     # Guardar el último correlativo exitoso
                     if correlativo:
                         ultimo_correlativo_exitoso = correlativo
@@ -790,13 +797,19 @@ try:
     # Determinar desde dónde empezar (buscar con Ctrl+F si hay último correlativo)
     indice_ultimo = None
     if ultimo_correlativo_procesado:
-        indice_ultimo = buscar_correlativo_con_ctrl_f(driver, ultimo_correlativo_procesado)
-        
+        indice_ultimo = buscar_correlativo_con_ctrl_f(
+            driver, ultimo_correlativo_procesado
+        )
+
         if indice_ultimo is not None:
             print(f"✅ Último correlativo encontrado en índice {indice_ultimo}")
-            print(f"⬆️ Se procesarán los registros ANTERIORES (hacia arriba) desde el índice {indice_ultimo - 1} hasta el índice 0")
+            print(
+                f"⬆️ Se procesarán los registros ANTERIORES (hacia arriba) desde el índice {indice_ultimo - 1} hasta el índice 0"
+            )
         else:
-            print(f"⚠️ Correlativo previo no encontrado, procesando desde el final hacia arriba")
+            print(
+                f"⚠️ Correlativo previo no encontrado, procesando desde el final hacia arriba"
+            )
             indice_ultimo = total_filas  # Empezar desde el final si no se encuentra
 
     else:
@@ -807,8 +820,10 @@ try:
     # Rango: desde (indice_ultimo - 1) hasta 0 (inclusive), decrementando
     registros_a_procesar = indice_ultimo
     print(f"\n🔢 Se procesarán {registros_a_procesar} registros nuevos")
-    
-    for idx in range(indice_ultimo - 1, -1, -1):  # Desde indice_ultimo-1 hasta 0, decrementando
+
+    for idx in range(
+        indice_ultimo - 1, -1, -1
+    ):  # Desde indice_ultimo-1 hasta 0, decrementando
         try:
             driver.switch_to.window(ventana_principal)
             registros_procesados_totales += 1
@@ -885,11 +900,11 @@ try:
         f"   🎁 Total archivos nuevos: {(pdfs_finales - pdfs_iniciales) + (jsons_finales - jsons_iniciales)}"
     )
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
-    
+
     if ultimo_correlativo_exitoso:
         print(f"📄 Último correlativo procesado: {ultimo_correlativo_exitoso}")
 
-    input("\nPresiona Enter para cerrar el navegador...")
+    print("\n✅ Proceso completado. El navegador se cerrará automáticamente...")
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
