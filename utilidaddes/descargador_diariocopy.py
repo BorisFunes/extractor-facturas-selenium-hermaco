@@ -1,11 +1,17 @@
+import sys
+import io
+
+# Configurar codificación UTF-8 para Windows
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
 import json
@@ -13,7 +19,8 @@ import traceback
 from datetime import datetime
 
 # Configuración de la carpeta de descargas
-DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_diarias")
+# Ruta fija al Desktop del usuario H01ventas05 (Windows Server)
+DOWNLOAD_FOLDER = r"C:\Users\H01ventas05\Desktop\extractor-facturas-selenium-hermaco-main\descargas_diarias"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Configuración de Chrome para descargas automáticas
@@ -34,10 +41,8 @@ chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920,1080")
 
-# Inicializar el navegador
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()), options=chrome_options
-)
+# Inicializar el navegador (Selenium Manager maneja el driver automáticamente)
+driver = webdriver.Chrome(options=chrome_options)
 
 # Variables globales
 registros_fallidos = []
@@ -631,7 +636,7 @@ try:
     time.sleep(2)
     print("📍 Estamos en la página de facturas")
 
-    # Filtro de fecha - HOY
+    # Filtro de fecha - AYER (MODIFICACIÓN PRINCIPAL)
     print("\n🔄 Abriendo filtro de fecha...")
     filtro_fecha = wait.until(EC.element_to_be_clickable((By.ID, "sell_date_filter")))
     filtro_fecha.click()
@@ -721,7 +726,7 @@ try:
     print(f"\n📊 Total de registros en tabla: {total_filas}")
 
     if total_filas == 0:
-        print("⚠️ No hay registros para procesar hoy")
+        print("⚠️ No hay registros para procesar de ayer")
         driver.quit()
         exit(0)
 
@@ -761,7 +766,7 @@ try:
 
     # Procesamiento de registros
     print("\n" + "=" * 60)
-    print("🚀 INICIANDO PROCESAMIENTO DE REGISTROS DE HOY")
+    print("🚀 INICIANDO PROCESAMIENTO DE REGISTROS DE AYER")
     print("=" * 60)
 
     ventana_principal = driver.current_window_handle
@@ -859,8 +864,6 @@ try:
 
     # Guardar reporte de fallidos
     guardar_reporte_fallidos()
-
-    print("\n✅ Proceso completado. El navegador se cerrará automáticamente...")
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")

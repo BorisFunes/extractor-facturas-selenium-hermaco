@@ -2,9 +2,9 @@
 ORQUESTADOR DE DESCARGAS - HERMACO ERP
 ========================================
 Este script ejecuta en secuencia los descargadores de:
-1. Facturas de ayer (descargador_diario copy.py)
-2. Gastos (descargadordegastos.py)
-3. Remisiones (descargadorderemisiones.py)
+1. Facturas de ayer (descargador_diario_copy.py)
+2. Remisiones (descargadorderemisiones.py)
+3. Gastos (descargadordegastos.py)
 
 Modo: Headless (sin interfaz gráfica)
 Uso: python Orquestador.py
@@ -18,29 +18,43 @@ import glob
 from datetime import datetime
 import traceback
 
+# Configurar codificación UTF-8 para Windows
+if sys.platform == "win32":
+    import io
+
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 
 class OrquestadorDescargas:
     def __init__(self):
         self.directorio_base = os.path.dirname(os.path.abspath(__file__))
+        # Ruta base de descargas en el Desktop del usuario H01ventas05
+        self.ruta_base_descargas = (
+            r"C:\Users\H01ventas05\Desktop\extractor-facturas-selenium-hermaco-main"
+        )
         self.fecha_inicio = datetime.now()
         self.scripts = [
             {
                 "nombre": "Descargador de Facturas de Ayer",
-                "archivo": "descargador_diario copy.py",
+                "archivo": "descargador_diario_copy.py",
                 "descripcion": "Descarga facturas del día anterior",
                 "carpeta_descargas": "descargas_diarias",
-            },
-            {
-                "nombre": "Descargador de Gastos",
-                "archivo": "descargadordegastos.py",
-                "descripcion": "Descarga todos los gastos con estado 'Pagado'",
-                "carpeta_descargas": "descargas_gastos",
+                "filtro": "Ayer (facturas del día anterior)",
             },
             {
                 "nombre": "Descargador de Remisiones",
                 "archivo": "descargadorderemisiones.py",
                 "descripcion": "Descarga notas de remisión del ejercicio actual",
                 "carpeta_descargas": "descargas_remisiones",
+                "filtro": "Ejercicio actual - Todas las remisiones nuevas",
+            },
+            {
+                "nombre": "Descargador de Gastos",
+                "archivo": "descargadordegastos.py",
+                "descripcion": "Descarga todos los gastos con estado 'Pagado'",
+                "carpeta_descargas": "descargas_gastos",
+                "filtro": "Estado: Pagado - Tipo: Gastos (DTE-14)",
             },
         ]
         self.resultados = []
@@ -67,11 +81,25 @@ class OrquestadorDescargas:
         exitosos = sum(1 for r in self.resultados if r["exitoso"])
         fallidos = len(self.resultados) - exitosos
 
-        for resultado in self.resultados:
+        for i, resultado in enumerate(self.resultados):
+            script_info = self.scripts[i]
             estado = "✅ EXITOSO" if resultado["exitoso"] else "❌ FALLIDO"
             duracion = resultado["duracion"]
+
             print(f"\n{estado} - {resultado['nombre']}")
+            print(f"   📝 Descripción: {script_info['descripcion']}")
+            print(f"   🔍 Filtro usado: {script_info.get('filtro', 'N/A')}")
             print(f"   ⏱️  Duración: {duracion:.2f} segundos")
+
+            # Mostrar archivos descargados
+            carpeta_descargas = script_info.get("carpeta_descargas", "")
+            if carpeta_descargas and resultado["exitoso"]:
+                conteo = self.contar_archivos_descargados(carpeta_descargas)
+                print(f"   📁 Archivos descargados:")
+                print(f"      • PDFs: {conteo['pdfs']}")
+                print(f"      • JSONs: {conteo['jsons']}")
+                print(f"      • Total: {conteo['total']}")
+
             if not resultado["exitoso"]:
                 print(f"   ⚠️  Error: {resultado['error']}")
 
@@ -79,9 +107,29 @@ class OrquestadorDescargas:
         print(f"📊 Total de scripts ejecutados: {len(self.resultados)}")
         print(f"✅ Exitosos: {exitosos}")
         print(f"❌ Fallidos: {fallidos}")
+
+        # Calcular total de archivos descargados
+        total_pdfs = 0
+        total_jsons = 0
+        for i, resultado in enumerate(self.resultados):
+            if resultado["exitoso"]:
+                script_info = self.scripts[i]
+                carpeta_descargas = script_info.get("carpeta_descargas", "")
+                if carpeta_descargas:
+                    conteo = self.contar_archivos_descargados(carpeta_descargas)
+                    total_pdfs += conteo["pdfs"]
+                    total_jsons += conteo["jsons"]
+
+        print(f"\n� Total de archivos descargados:")
+        print(f"   • PDFs: {total_pdfs}")
+        print(f"   • JSONs: {total_jsons}")
+        print(f"   • Total: {total_pdfs + total_jsons}")
+
         print(
-            f"📅 Fecha y hora de finalización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"\n�📅 Fecha y hora de finalización: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
+        duracion_total = (datetime.now() - self.fecha_inicio).total_seconds()
+        print(f"⏱️  Duración total: {duracion_total:.2f}s ({duracion_total/60:.2f}m)")
         print("=" * 70 + "\n")
 
     def contar_archivos_descargados(self, carpeta):
@@ -94,7 +142,8 @@ class OrquestadorDescargas:
         Returns:
             dict: Diccionario con conteo de PDFs y JSONs
         """
-        carpeta_path = os.path.join(self.directorio_base, carpeta)
+        # Usar la ruta base de descargas configurada
+        carpeta_path = os.path.join(self.ruta_base_descargas, carpeta)
 
         if not os.path.exists(carpeta_path):
             return {"pdfs": 0, "jsons": 0, "total": 0}
@@ -137,6 +186,18 @@ class OrquestadorDescargas:
             fecha_fin = datetime.now()
             duracion_total = (fecha_fin - self.fecha_inicio).total_seconds()
 
+            # Calcular totales de archivos descargados
+            total_pdfs = 0
+            total_jsons = 0
+            for i, resultado in enumerate(self.resultados):
+                if resultado["exitoso"]:
+                    script_info = self.scripts[i]
+                    carpeta_descargas = script_info.get("carpeta_descargas", "")
+                    if carpeta_descargas:
+                        conteo = self.contar_archivos_descargados(carpeta_descargas)
+                        total_pdfs += conteo["pdfs"]
+                        total_jsons += conteo["jsons"]
+
             # Construir el reporte
             reporte = {
                 "fecha_inicio": self.fecha_inicio.isoformat(),
@@ -149,6 +210,11 @@ class OrquestadorDescargas:
                     "fallidos": sum(1 for r in self.resultados if not r["exitoso"]),
                     "tasa_exito": f"{(sum(1 for r in self.resultados if r['exitoso']) / len(self.resultados) * 100):.1f}%",
                 },
+                "archivos_totales_descargados": {
+                    "pdfs": total_pdfs,
+                    "jsons": total_jsons,
+                    "total": total_pdfs + total_jsons,
+                },
                 "scripts_ejecutados": [],
             }
 
@@ -156,6 +222,7 @@ class OrquestadorDescargas:
             for i, resultado in enumerate(self.resultados, 1):
                 script_info = self.scripts[i - 1]
                 carpeta_descargas = script_info.get("carpeta_descargas", "")
+                filtro_usado = script_info.get("filtro", "No especificado")
 
                 # Contar archivos descargados
                 conteo = {"pdfs": 0, "jsons": 0, "total": 0}
@@ -166,6 +233,8 @@ class OrquestadorDescargas:
                     "orden": i,
                     "nombre": resultado["nombre"],
                     "archivo": script_info["archivo"],
+                    "descripcion": script_info["descripcion"],
+                    "filtro_usado": filtro_usado,
                     "estado": "exitoso" if resultado["exitoso"] else "fallido",
                     "duracion_segundos": resultado["duracion"],
                     "duracion_formateada": f"{resultado['duracion']:.2f}s",
@@ -203,6 +272,8 @@ class OrquestadorDescargas:
         nombre = script_info["nombre"]
         archivo = script_info["archivo"]
         descripcion = script_info["descripcion"]
+
+        # Usar ruta relativa al mismo nivel que el orquestador
         ruta_completa = os.path.join(self.directorio_base, archivo)
 
         print("\n" + "=" * 70)
@@ -211,6 +282,7 @@ class OrquestadorDescargas:
         print(f"📄 Script: {nombre}")
         print(f"📝 Descripción: {descripcion}")
         print(f"📂 Archivo: {archivo}")
+        print(f"📍 Directorio base: {self.directorio_base}")
         print(f"⏰ Hora de inicio: {datetime.now().strftime('%H:%M:%S')}")
         print("=" * 70 + "\n")
 

@@ -2,10 +2,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
 import glob
@@ -19,8 +17,8 @@ DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_erp")
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # ⚠️ CONFIGURACIÓN DE BÚSQUEDA
-DTE_INICIAL = "DTE-03-M001P001-000000000001376"
-FECHA_LIMITE = "10/11/2025 08:13 am"
+DTE_INICIAL = "DTE-03-S002P001-000000000000724"
+FECHA_LIMITE = "11/11/2025 08:07 am"
 
 # Configuración de Chrome para descargas automáticas
 chrome_options = webdriver.ChromeOptions()
@@ -34,9 +32,7 @@ prefs = {
 chrome_options.add_experimental_option("prefs", prefs)
 
 # Inicializar el navegador
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()), options=chrome_options
-)
+driver = webdriver.Chrome(options=chrome_options)
 
 # Listas para tracking
 registros_fallidos = []
@@ -790,7 +786,7 @@ try:
         indice_fecha_limite = len(filas)  # Procesar hasta el final
     else:
         print(f"✅ Fecha límite encontrada en índice: {indice_fecha_limite}")
-        # El límite es ANTES de la fecha límite (no incluir el 10/11/2025)
+        # El límite es ANTES de la fecha límite (no incluir el 11/11/2025)
         print(f"⚠️ Se detendrá ANTES del índice {indice_fecha_limite}")
         print(f"   (No se descargará la fecha {FECHA_LIMITE} ni registros posteriores)")
 

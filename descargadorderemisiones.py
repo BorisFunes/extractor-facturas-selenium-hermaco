@@ -2,10 +2,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
 import glob
@@ -39,9 +37,7 @@ chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920,1080")
 
 # Inicializar el navegador
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()), options=chrome_options
-)
+driver = webdriver.Chrome(options=chrome_options)
 
 # Variable para tracking
 ultimo_correlativo_exitoso = None
@@ -85,14 +81,22 @@ def leer_ultimo_correlativo_exitoso():
         return None
 
 
-def guardar_ultimo_correlativo(correlativo):
+def guardar_ultimo_correlativo(correlativo, tiene_descargas_nuevas=True):
     """Guarda el último correlativo exitoso en el archivo JSON fijo"""
     try:
+        fecha_actual = datetime.now()
+        estado = (
+            "Todo actualizado - nuevas descargas"
+            if tiene_descargas_nuevas
+            else "Todo actualizado - nada nuevo"
+        )
         with open(ARCHIVO_ULTIMO_EXITOSO, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "fecha_actualizacion": datetime.now().isoformat(),
+                    "ultima_ejecucion": fecha_actual.strftime("%Y-%m-%d %H:%M:%S"),
+                    "fecha_actualizacion": fecha_actual.isoformat(),
                     "ultimo_correlativo": correlativo,
+                    "estado": estado,
                 },
                 f,
                 indent=2,
@@ -738,18 +742,18 @@ try:
 
     time.sleep(2)
     try:
-        ejercicio_actual = wait.until(
+        hoy = wait.until(
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
-                    "//li[contains(text(), 'Ejercicio actual')] | //a[contains(text(), 'Ejercicio actual')] | //span[contains(text(), 'Ejercicio actual')]",
+                    "//li[contains(text(), 'Hoy')] | //a[contains(text(), 'Hoy')] | //span[contains(text(), 'Hoy')]",
                 )
             )
         )
-        ejercicio_actual.click()
-        print("✅ Seleccionado 'Ejercicio actual'")
+        hoy.click()
+        print("✅ Seleccionado 'Hoy'")
     except:
-        print("⚠️ No se encontró 'Ejercicio actual'. Inspecciona el desplegable.")
+        print("⚠️ No se encontró 'Hoy'. Inspecciona el desplegable.")
 
     time.sleep(3)
 
@@ -820,6 +824,37 @@ try:
     # Rango: desde (indice_ultimo - 1) hasta 0 (inclusive), decrementando
     registros_a_procesar = indice_ultimo
     print(f"\n🔢 Se procesarán {registros_a_procesar} registros nuevos")
+
+    # Si no hay registros nuevos, terminar
+    if registros_a_procesar == 0:
+        print("\n" + "=" * 60)
+        print("ℹ️ No hay registros nuevos para procesar")
+        print("=" * 60)
+        # Guardar con mensaje de actualizado
+        if ultimo_correlativo_procesado:
+            try:
+                fecha_actual = datetime.now()
+                with open(ARCHIVO_ULTIMO_EXITOSO, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "ultima_ejecucion": fecha_actual.strftime(
+                                "%Y-%m-%d %H:%M:%S"
+                            ),
+                            "fecha_actualizacion": fecha_actual.isoformat(),
+                            "ultimo_correlativo": ultimo_correlativo_procesado,
+                            "estado": "Todo actualizado - nada nuevo",
+                        },
+                        f,
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                print(f"✅ Estado actualizado: Todo actualizado - nada nuevo")
+            except Exception as e:
+                print(f"⚠️ Error al actualizar estado: {e}")
+        print("\n✅ Proceso completado. El navegador se cerrará automáticamente...")
+        driver.quit()
+        print("\n👋 Navegador cerrado")
+        exit(0)
 
     for idx in range(
         indice_ultimo - 1, -1, -1

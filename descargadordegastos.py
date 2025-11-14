@@ -2,10 +2,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
 import glob
@@ -36,9 +34,7 @@ chrome_options.add_argument("--disable-gpu")
 chrome_options.add_argument("--window-size=1920,1080")
 
 # Inicializar el navegador
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()), options=chrome_options
-)
+driver = webdriver.Chrome(options=chrome_options)
 
 # Archivos JSON fijos para tracking
 ARCHIVO_DESCARGADOS = os.path.join(DOWNLOAD_FOLDER, "01descargados.json")
@@ -55,7 +51,11 @@ def cargar_json_tracking(archivo):
         if os.path.exists(archivo):
             with open(archivo, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                registros = data.get("registros", [])
+                # Compatibilidad: puede venir como objeto con "registros" o como lista directa
+                if isinstance(data, dict):
+                    registros = data.get("registros", [])
+                else:
+                    registros = data
                 print(
                     f"✅ Cargados {len(registros)} registros desde {os.path.basename(archivo)}"
                 )
@@ -560,7 +560,7 @@ def procesar_registro_con_reintentos(
     return False
 
 
-def guardar_registros_actualizados():
+def guardar_registros_actualizados(archivos_nuevos_descargados=0):
     """
     Guarda los registros descargados e ignorados en sus archivos JSON fijos
     """
@@ -569,13 +569,49 @@ def guardar_registros_actualizados():
 
     print(f"\n📊 Guardando registros actualizados...")
 
-    # Guardar descargados
-    guardar_json_tracking(ARCHIVO_DESCARGADOS, registros_descargados, "descargados")
+    fecha_actual = datetime.now()
+    estado = (
+        "Todo actualizado - nuevas descargas"
+        if archivos_nuevos_descargados > 0
+        else "Todo actualizado - nada nuevo"
+    )
 
-    # Guardar ignorados
-    guardar_json_tracking(ARCHIVO_IGNORADOS, registros_ignorados, "ignorados")
+    # Agregar metadata de última ejecución a descargados
+    data_descargados = {
+        "ultima_ejecucion": fecha_actual.strftime("%Y-%m-%d %H:%M:%S"),
+        "fecha_actualizacion": fecha_actual.isoformat(),
+        "total_registros": len(registros_descargados),
+        "estado": estado,
+        "registros": registros_descargados,
+    }
+
+    # Agregar metadata de última ejecución a ignorados
+    data_ignorados = {
+        "ultima_ejecucion": fecha_actual.strftime("%Y-%m-%d %H:%M:%S"),
+        "fecha_actualizacion": fecha_actual.isoformat(),
+        "total_registros": len(registros_ignorados),
+        "estado": estado,
+        "registros": registros_ignorados,
+    }
+
+    # Guardar descargados con metadata
+    try:
+        with open(ARCHIVO_DESCARGADOS, "w", encoding="utf-8") as f:
+            json.dump(data_descargados, f, indent=2, ensure_ascii=False)
+        print(f"  ✅ Registros descargados guardados: {len(registros_descargados)}")
+    except Exception as e:
+        print(f"  ❌ Error guardando descargados: {e}")
+
+    # Guardar ignorados con metadata
+    try:
+        with open(ARCHIVO_IGNORADOS, "w", encoding="utf-8") as f:
+            json.dump(data_ignorados, f, indent=2, ensure_ascii=False)
+        print(f"  ✅ Registros ignorados guardados: {len(registros_ignorados)}")
+    except Exception as e:
+        print(f"  ❌ Error guardando ignorados: {e}")
 
     print(f"✅ Registros guardados correctamente")
+    print(f"📊 Estado: {estado}")
 
 
 def verificar_ignorados_cambiaron_a_pagado(driver, wait):
@@ -1097,8 +1133,18 @@ try:
     )
     print(f"\n📁 Archivos descargados en: {DOWNLOAD_FOLDER}")
 
-    # Guardar registros actualizados
-    guardar_registros_actualizados()
+    # Guardar registros actualizados con información de archivos nuevos
+    archivos_nuevos = (pdfs_finales - pdfs_iniciales) + (
+        jsons_finales - jsons_iniciales
+    )
+    guardar_registros_actualizados(archivos_nuevos_descargados=archivos_nuevos)
+
+    if archivos_nuevos > 0:
+        print(
+            f"\n📥 Estado: Todo actualizado - nuevas descargas ({archivos_nuevos} archivos)"
+        )
+    else:
+        print(f"\nℹ️ Estado: Todo actualizado - nada nuevo")
 
     print("\n✅ Proceso completado. El navegador se cerrará automáticamente...")
 

@@ -1,3 +1,11 @@
+import sys
+import io
+
+# Configurar codificación UTF-8 para Windows
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 import os
 import shutil
 import re
@@ -5,17 +13,29 @@ from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
 
-# Configuración de carpetas
-CARPETA_ORIGEN = Path("descargas_erp")
-CARPETA_DESTINO_BASE = Path("facturas")
+# Nombres de carpetas origen a buscar
+CARPETAS_ORIGEN_NOMBRES = [
+    "descargas_diarias",
+    "descargas_gastos",
+    "descargas_remisiones",
+]
 
-# Carpetas de destino
-CARPETAS_DESTINO = {
-    "SS": CARPETA_DESTINO_BASE / "SS",  # San Salvador
-    "SA": CARPETA_DESTINO_BASE / "SA",  # Santa Ana
-    "SM": CARPETA_DESTINO_BASE / "SM",  # San Miguel
-    "notas_credito": CARPETA_DESTINO_BASE / "notas_de_credito",
-}
+# Nombres de carpetas destino requeridas (para clasificación)
+CARPETAS_DESTINO_NOMBRES = [
+    "notas_de_credito",
+    "SA",
+    "SS",
+    "SM",
+    "descargas_remisiones",
+    "descargas_gastos",
+]
+
+# Carpetas que NO se clasifican (se copian/mueven directamente)
+CARPETAS_SIN_CLASIFICAR = ["descargas_remisiones", "descargas_gastos"]
+
+# Variables globales que se configurarán en tiempo de ejecución
+CARPETAS_ORIGEN = []
+CARPETAS_DESTINO = {}
 
 # Reglas de prefijos (solo los primeros 4 caracteres importan: M001, S001, etc.)
 REGLAS_PREFIJOS = {
@@ -87,6 +107,143 @@ def obtener_carpeta_destino(nombre_archivo, prefijo_completo):
     return None
 
 
+def configurar_carpetas():
+    """
+    Solicita al usuario las rutas de carpetas origen y destino
+    """
+    global CARPETAS_ORIGEN, CARPETAS_DESTINO
+
+    print("\n" + "=" * 80)
+    print("CONFIGURACIÓN DE RUTAS")
+    print("=" * 80)
+
+    # Solicitar carpeta padre de origen
+    while True:
+        print("\n📂 CARPETA DE ORIGEN (Padre)")
+        print("   Esta carpeta debe contener las subcarpetas:")
+        for nombre in CARPETAS_ORIGEN_NOMBRES:
+            print(f"   - {nombre}")
+
+        ruta_origen_padre = input(
+            "\nIngrese la ruta de la carpeta padre de origen: "
+        ).strip()
+        ruta_origen_padre = Path(ruta_origen_padre)
+
+        if not ruta_origen_padre.exists():
+            print(f"❌ Error: La ruta '{ruta_origen_padre}' no existe.")
+            print("   Por favor, ingrese una ruta válida.")
+            continue
+
+        if not ruta_origen_padre.is_dir():
+            print(f"❌ Error: '{ruta_origen_padre}' no es un directorio.")
+            continue
+
+        # Verificar que existan las carpetas de origen
+        carpetas_encontradas = []
+        carpetas_faltantes = []
+
+        for nombre in CARPETAS_ORIGEN_NOMBRES:
+            carpeta = ruta_origen_padre / nombre
+            if carpeta.exists() and carpeta.is_dir():
+                carpetas_encontradas.append(carpeta)
+                print(f"   ✓ Encontrada: {nombre}")
+            else:
+                carpetas_faltantes.append(nombre)
+                print(f"   ✗ No encontrada: {nombre}")
+
+        if carpetas_faltantes:
+            print(f"\n⚠️  Advertencia: Faltan {len(carpetas_faltantes)} carpeta(s):")
+            for nombre in carpetas_faltantes:
+                print(f"   - {nombre}")
+
+            continuar = (
+                input("\n¿Desea continuar de todas formas? (S/N): ").strip().upper()
+            )
+            if continuar != "S":
+                continue
+
+        CARPETAS_ORIGEN = carpetas_encontradas
+        print(f"\n✓ Carpetas de origen configuradas: {len(CARPETAS_ORIGEN)}")
+        break
+
+    # Solicitar carpeta de destino
+    while True:
+        print("\n📂 CARPETA DE DESTINO")
+        print("   Esta carpeta debe contener (o se crearán) las subcarpetas:")
+        for nombre in CARPETAS_DESTINO_NOMBRES:
+            print(f"   - {nombre}")
+
+        ruta_destino = input("\nIngrese la ruta de la carpeta de destino: ").strip()
+        ruta_destino = Path(ruta_destino)
+
+        if not ruta_destino.exists():
+            print(f"⚠️  La ruta '{ruta_destino}' no existe.")
+            crear = input("¿Desea crearla? (S/N): ").strip().upper()
+            if crear == "S":
+                try:
+                    ruta_destino.mkdir(parents=True, exist_ok=True)
+                    print(f"✓ Carpeta creada: {ruta_destino}")
+                except Exception as e:
+                    print(f"❌ Error al crear carpeta: {e}")
+                    continue
+            else:
+                continue
+
+        if not ruta_destino.is_dir():
+            print(f"❌ Error: '{ruta_destino}' no es un directorio.")
+            continue
+
+        # Verificar estructura de carpetas destino
+        carpetas_destino_encontradas = []
+        carpetas_destino_faltantes = []
+
+        for nombre in CARPETAS_DESTINO_NOMBRES:
+            carpeta = ruta_destino / nombre
+            if carpeta.exists() and carpeta.is_dir():
+                carpetas_destino_encontradas.append(nombre)
+                print(f"   ✓ Encontrada: {nombre}")
+            else:
+                carpetas_destino_faltantes.append(nombre)
+                print(f"   ✗ No encontrada: {nombre}")
+
+        if carpetas_destino_faltantes:
+            print(f"\n⚠️  Faltan carpetas de destino, se creará una nueva estructura")
+            print(f"   Carpetas a crear: {len(carpetas_destino_faltantes)}")
+
+            # Crear las carpetas faltantes
+            try:
+                for nombre in carpetas_destino_faltantes:
+                    carpeta = ruta_destino / nombre
+                    carpeta.mkdir(parents=True, exist_ok=True)
+                    print(f"   ✓ Creada: {nombre}")
+                print("\n✓ Estructura de carpetas creada correctamente")
+            except Exception as e:
+                print(f"❌ Error al crear estructura: {e}")
+                continue
+        else:
+            print("\n✓ Estructura de carpetas de destino encontrada")
+
+        # Configurar diccionario de carpetas destino
+        CARPETAS_DESTINO = {
+            "SS": ruta_destino / "SS",
+            "SA": ruta_destino / "SA",
+            "SM": ruta_destino / "SM",
+            "notas_credito": ruta_destino / "notas_de_credito",
+            "descargas_remisiones": ruta_destino / "descargas_remisiones",
+            "descargas_gastos": ruta_destino / "descargas_gastos",
+        }
+
+        print(f"\n✓ Carpetas de destino configuradas")
+        break
+
+    print("\n" + "=" * 80)
+    print("✓ CONFIGURACIÓN COMPLETADA")
+    print("=" * 80)
+    print(f"📂 Carpetas origen: {len(CARPETAS_ORIGEN)}")
+    print(f"📂 Carpeta destino: {ruta_destino}")
+    print("=" * 80)
+
+
 def mostrar_menu():
     """
     Muestra el menú principal
@@ -98,15 +255,16 @@ def mostrar_menu():
     print("  1. Distribuir archivos (mover)")
     print("  2. Distribuir archivos (copiar)")
     print("  3. Generar reporte sin mover archivos")
-    print("  4. Salir")
+    print("  4. Reconfigurar rutas")
+    print("  5. Salir")
     print("-" * 80)
 
     while True:
-        opcion = input("\nIngrese el número de opción (1-4): ").strip()
-        if opcion in ["1", "2", "3", "4"]:
+        opcion = input("\nIngrese el número de opción (1-5): ").strip()
+        if opcion in ["1", "2", "3", "4", "5"]:
             return opcion
         else:
-            print("⚠️  Opción inválida. Por favor ingrese 1, 2, 3 o 4.")
+            print("⚠️  Opción inválida. Por favor ingrese 1, 2, 3, 4 o 5.")
 
 
 def distribuir_archivos(modo="mover"):
@@ -118,37 +276,80 @@ def distribuir_archivos(modo="mover"):
     print(f"DISTRIBUCIÓN DE ARCHIVOS - MODO: {modo.upper()}")
     print("=" * 80)
 
-    # Verificar que la carpeta origen existe
-    if not CARPETA_ORIGEN.exists():
-        print(f"\n❌ Error: La carpeta {CARPETA_ORIGEN} no existe")
+    # Verificar que hay carpetas configuradas
+    if not CARPETAS_ORIGEN:
+        print(f"\n❌ Error: No hay carpetas de origen configuradas")
+        print("   Use la opción 4 para configurar las rutas")
+        return
+
+    if not CARPETAS_DESTINO:
+        print(f"\n❌ Error: No hay carpetas de destino configuradas")
+        print("   Use la opción 4 para configurar las rutas")
         return
 
     # Crear carpetas de destino si no existen
     for carpeta in CARPETAS_DESTINO.values():
         carpeta.mkdir(parents=True, exist_ok=True)
 
-    # Obtener todos los archivos PDF y JSON
-    archivos_pdf = list(CARPETA_ORIGEN.glob("*.pdf"))
-    archivos_json = list(CARPETA_ORIGEN.glob("*.json"))
+    # Recolectar archivos por tipo (clasificables y sin clasificar)
+    archivos_para_clasificar = []  # De descargas_diarias
+    archivos_sin_clasificar_por_carpeta = {}  # De remisiones y gastos
 
-    # Filtrar archivos JSON que no sean de reporte
-    archivos_json_validos = [
-        f
-        for f in archivos_json
-        if not (
-            "registros_fallidos" in f.name
-            or "ultimo_" in f.name
-            or "duplicados" in f.name
-            or "sin_correlacion" in f.name
-        )
-    ]
+    print(f"\n🔍 Buscando archivos en {len(CARPETAS_ORIGEN)} carpeta(s)...")
+    print("-" * 80)
 
-    todos_archivos = archivos_pdf + archivos_json_validos
-    total_archivos = len(todos_archivos)
+    for carpeta_origen in CARPETAS_ORIGEN:
+        print(f"\n📂 Procesando: {carpeta_origen.name}")
 
-    print(f"\n📊 Total de archivos encontrados: {total_archivos}")
-    print(f"   📄 PDFs: {len(archivos_pdf)}")
-    print(f"   📄 JSONs: {len(archivos_json_validos)}")
+        # Obtener todos los archivos PDF y JSON
+        archivos_pdf = list(carpeta_origen.glob("*.pdf"))
+        archivos_json = list(carpeta_origen.glob("*.json"))
+
+        # Filtrar archivos JSON que no sean de reporte
+        archivos_json_validos = [
+            f
+            for f in archivos_json
+            if not (
+                "registros_fallidos" in f.name
+                or "ultimo_" in f.name
+                or "duplicados" in f.name
+                or "sin_correlacion" in f.name
+                or "01descargados" in f.name
+                or "02ignorados" in f.name
+            )
+        ]
+
+        carpeta_archivos = archivos_pdf + archivos_json_validos
+
+        print(f"   📄 PDFs encontrados: {len(archivos_pdf)}")
+        print(f"   📄 JSONs encontrados: {len(archivos_json_validos)}")
+        print(f"   📊 Total: {len(carpeta_archivos)}")
+
+        # Determinar si esta carpeta requiere clasificación o copia directa
+        if carpeta_origen.name in CARPETAS_SIN_CLASIFICAR:
+            # Carpetas sin clasificar: copiar/mover directamente
+            archivos_sin_clasificar_por_carpeta[carpeta_origen.name] = carpeta_archivos
+            print(f"   ℹ️  Modo: Copia directa (sin clasificación)")
+        else:
+            # Carpetas que requieren clasificación
+            archivos_para_clasificar.extend(carpeta_archivos)
+            print(f"   ℹ️  Modo: Clasificación por prefijo")
+
+    total_archivos_clasificables = len(archivos_para_clasificar)
+    total_archivos_directos = sum(
+        len(archivos) for archivos in archivos_sin_clasificar_por_carpeta.values()
+    )
+    total_archivos = total_archivos_clasificables + total_archivos_directos
+
+    print("\n" + "=" * 80)
+    print(f"📊 RESUMEN DE ARCHIVOS ENCONTRADOS")
+    print("=" * 80)
+    print(f"Total de archivos a procesar: {total_archivos}")
+    print(f"  • Archivos para clasificar: {total_archivos_clasificables}")
+    print(f"  • Archivos para copia directa: {total_archivos_directos}")
+    if archivos_sin_clasificar_por_carpeta:
+        for carpeta_nombre, archivos in archivos_sin_clasificar_por_carpeta.items():
+            print(f"    - {carpeta_nombre}: {len(archivos)}")
     print("-" * 80)
 
     if total_archivos == 0:
@@ -171,6 +372,8 @@ def distribuir_archivos(modo="mover"):
         "SA": 0,
         "SM": 0,
         "notas_credito": 0,
+        "descargas_remisiones": 0,
+        "descargas_gastos": 0,
         "sin_clasificar": 0,
         "errores": 0,
     }
@@ -181,68 +384,108 @@ def distribuir_archivos(modo="mover"):
     print(f"\n🔄 Procesando archivos...")
     print("-" * 80)
 
-    # Procesar cada archivo
-    for archivo in todos_archivos:
-        nombre_archivo = archivo.name
+    # PARTE 1: Procesar archivos sin clasificar (copia directa)
+    if archivos_sin_clasificar_por_carpeta:
+        print(f"\n📦 PROCESANDO ARCHIVOS DE COPIA DIRECTA...")
+        print("-" * 80)
 
-        # Extraer prefijo completo
-        prefijo_completo = extraer_prefijo_completo(nombre_archivo)
+        for carpeta_nombre, archivos in archivos_sin_clasificar_por_carpeta.items():
+            carpeta_destino = CARPETAS_DESTINO[carpeta_nombre]
+            print(f"\n📂 Carpeta: {carpeta_nombre} -> {carpeta_nombre}")
+            print(f"   Archivos: {len(archivos)}")
 
-        if not prefijo_completo:
-            # No se pudo extraer prefijo
-            archivos_sin_clasificar.append(nombre_archivo)
-            estadisticas["sin_clasificar"] += 1
-            print(f"⚠️  Sin prefijo: {nombre_archivo}")
-            continue
+            for archivo in archivos:
+                nombre_archivo = archivo.name
+                ruta_destino = carpeta_destino / nombre_archivo
 
-        # Extraer prefijo de sucursal (primeros 4 caracteres)
-        prefijo_sucursal = extraer_prefijo_sucursal(prefijo_completo)
+                try:
+                    if modo == "mover":
+                        shutil.move(str(archivo), str(ruta_destino))
+                        print(f"   ✓ Movido: {nombre_archivo}")
+                    elif modo == "copiar":
+                        shutil.copy2(str(archivo), str(ruta_destino))
+                        print(f"   ✓ Copiado: {nombre_archivo}")
+                    else:  # modo reporte
+                        print(f"   📋 {nombre_archivo} -> {carpeta_nombre}")
 
-        # Obtener carpeta destino
-        carpeta_destino_key = obtener_carpeta_destino(nombre_archivo, prefijo_completo)
+                    estadisticas[carpeta_nombre] += 1
 
-        if carpeta_destino_key:
-            carpeta_destino = CARPETAS_DESTINO[carpeta_destino_key]
+                except Exception as e:
+                    print(f"   ❌ Error al procesar {nombre_archivo}: {e}")
+                    estadisticas["errores"] += 1
 
-            # Mover o copiar el archivo
-            ruta_destino = carpeta_destino / nombre_archivo
+    # PARTE 2: Procesar archivos que requieren clasificación
+    if archivos_para_clasificar:
+        print(f"\n🔍 PROCESANDO ARCHIVOS CON CLASIFICACIÓN...")
+        print("-" * 80)
 
-            try:
-                if modo == "mover":
-                    shutil.move(str(archivo), str(ruta_destino))
-                    print(
-                        f"✓ Movido: {nombre_archivo} -> {carpeta_destino_key} [{prefijo_sucursal}]"
-                    )
-                elif modo == "copiar":
-                    shutil.copy2(str(archivo), str(ruta_destino))
-                    print(
-                        f"✓ Copiado: {nombre_archivo} -> {carpeta_destino_key} [{prefijo_sucursal}]"
-                    )
-                else:  # modo reporte
-                    print(
-                        f"📋 {nombre_archivo} -> {carpeta_destino_key} [{prefijo_sucursal}]"
-                    )
+        for archivo in archivos_para_clasificar:
+            nombre_archivo = archivo.name
 
-                estadisticas[carpeta_destino_key] += 1
+            # Extraer prefijo completo
+            prefijo_completo = extraer_prefijo_completo(nombre_archivo)
 
-            except Exception as e:
-                print(f"❌ Error al procesar {nombre_archivo}: {e}")
-                estadisticas["errores"] += 1
+            if not prefijo_completo:
+                # No se pudo extraer prefijo
+                archivos_sin_clasificar.append(nombre_archivo)
+                estadisticas["sin_clasificar"] += 1
+                print(f"⚠️  Sin prefijo: {nombre_archivo}")
+                continue
 
-        else:
-            # Prefijo no reconocido
-            archivos_sin_clasificar.append(nombre_archivo)
-            prefijos_desconocidos[
-                prefijo_sucursal if prefijo_sucursal else prefijo_completo
-            ] += 1
-            estadisticas["sin_clasificar"] += 1
-            print(
-                f"⚠️  Prefijo no reconocido [{prefijo_sucursal}] (completo: {prefijo_completo}): {nombre_archivo}"
+            # Extraer prefijo de sucursal (primeros 4 caracteres)
+            prefijo_sucursal = extraer_prefijo_sucursal(prefijo_completo)
+
+            # Obtener carpeta destino
+            carpeta_destino_key = obtener_carpeta_destino(
+                nombre_archivo, prefijo_completo
             )
+
+            if carpeta_destino_key:
+                carpeta_destino = CARPETAS_DESTINO[carpeta_destino_key]
+
+                # Mover o copiar el archivo
+                ruta_destino = carpeta_destino / nombre_archivo
+
+                try:
+                    if modo == "mover":
+                        shutil.move(str(archivo), str(ruta_destino))
+                        print(
+                            f"✓ Movido: {nombre_archivo} -> {carpeta_destino_key} [{prefijo_sucursal}]"
+                        )
+                    elif modo == "copiar":
+                        shutil.copy2(str(archivo), str(ruta_destino))
+                        print(
+                            f"✓ Copiado: {nombre_archivo} -> {carpeta_destino_key} [{prefijo_sucursal}]"
+                        )
+                    else:  # modo reporte
+                        print(
+                            f"📋 {nombre_archivo} -> {carpeta_destino_key} [{prefijo_sucursal}]"
+                        )
+
+                    estadisticas[carpeta_destino_key] += 1
+
+                except Exception as e:
+                    print(f"❌ Error al procesar {nombre_archivo}: {e}")
+                    estadisticas["errores"] += 1
+
+            else:
+                # Prefijo no reconocido
+                archivos_sin_clasificar.append(nombre_archivo)
+                prefijos_desconocidos[
+                    prefijo_sucursal if prefijo_sucursal else prefijo_completo
+                ] += 1
+                estadisticas["sin_clasificar"] += 1
+                print(
+                    f"⚠️  Prefijo no reconocido [{prefijo_sucursal}] (completo: {prefijo_completo}): {nombre_archivo}"
+                )
 
     # Generar reporte
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     archivo_reporte = f"reporte_distribucion_{timestamp}.txt"
+
+    # Obtener nombres de carpetas origen para el reporte
+    nombres_carpetas_origen = [str(carpeta.name) for carpeta in CARPETAS_ORIGEN]
+    carpetas_origen_str = ", ".join(nombres_carpetas_origen)
 
     with open(archivo_reporte, "w", encoding="utf-8") as f:
         f.write("=" * 80 + "\n")
@@ -250,16 +493,22 @@ def distribuir_archivos(modo="mover"):
         f.write("=" * 80 + "\n")
         f.write(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Modo: {modo.upper()}\n")
-        f.write(f"Carpeta origen: {CARPETA_ORIGEN}\n")
+        f.write(f"Carpetas origen: {carpetas_origen_str}\n")
+        f.write(f"Carpeta destino: {list(CARPETAS_DESTINO.values())[0].parent}\n")
         f.write("-" * 80 + "\n\n")
 
         f.write("ESTADÍSTICAS:\n")
         f.write("-" * 80 + "\n")
         f.write(f"Total de archivos procesados: {total_archivos}\n")
+        f.write("\nArchivos clasificados por sucursal:\n")
         f.write(f"  • San Salvador (SS): {estadisticas['SS']}\n")
         f.write(f"  • Santa Ana (SA): {estadisticas['SA']}\n")
         f.write(f"  • San Miguel (SM): {estadisticas['SM']}\n")
         f.write(f"  • Notas de crédito: {estadisticas['notas_credito']}\n")
+        f.write("\nArchivos copiados sin clasificación:\n")
+        f.write(f"  • Remisiones: {estadisticas['descargas_remisiones']}\n")
+        f.write(f"  • Gastos: {estadisticas['descargas_gastos']}\n")
+        f.write("\nOtros:\n")
         f.write(f"  • Sin clasificar: {estadisticas['sin_clasificar']}\n")
         f.write(f"  • Errores: {estadisticas['errores']}\n")
         f.write("\n")
@@ -302,10 +551,15 @@ def distribuir_archivos(modo="mover"):
     print("📊 RESUMEN DE DISTRIBUCIÓN")
     print("=" * 80)
     print(f"Total de archivos procesados: {total_archivos}")
+    print("\nArchivos clasificados por sucursal:")
     print(f"  ✓ San Salvador (SS): {estadisticas['SS']}")
     print(f"  ✓ Santa Ana (SA): {estadisticas['SA']}")
     print(f"  ✓ San Miguel (SM): {estadisticas['SM']}")
     print(f"  ✓ Notas de crédito: {estadisticas['notas_credito']}")
+    print("\nArchivos copiados sin clasificación:")
+    print(f"  ✓ Remisiones: {estadisticas['descargas_remisiones']}")
+    print(f"  ✓ Gastos: {estadisticas['descargas_gastos']}")
+    print("\nOtros:")
     print(f"  ⚠️  Sin clasificar: {estadisticas['sin_clasificar']}")
     print(f"  ❌ Errores: {estadisticas['errores']}")
 
@@ -324,6 +578,9 @@ def main():
     """
     print("\n🚀 Iniciando Administrador de Facturas HERMACO")
 
+    # Configurar carpetas al inicio
+    configurar_carpetas()
+
     while True:
         opcion = mostrar_menu()
 
@@ -340,6 +597,10 @@ def main():
             distribuir_archivos(modo="reporte")
 
         elif opcion == "4":
+            # Reconfigurar rutas
+            configurar_carpetas()
+
+        elif opcion == "5":
             # Salir
             print("\n👋 ¡Hasta luego!")
             break

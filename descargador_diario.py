@@ -2,10 +2,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
 import json
@@ -13,7 +11,7 @@ import traceback
 from datetime import datetime
 
 # Configuración de la carpeta de descargas
-DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "descargas_diarias")
+DOWNLOAD_FOLDER = r"C:\Users\H01ventas05\Desktop\extractor-facturas-selenium-hermaco-main\descargas_diarias"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Configuración de Chrome para descargas automáticas
@@ -26,11 +24,14 @@ prefs = {
     "safebrowsing.enabled": True,
 }
 chrome_options.add_experimental_option("prefs", prefs)
+chrome_options.add_argument("--headless=new")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920,1080")
 
 # Inicializar el navegador
-driver = webdriver.Chrome(
-    service=Service(ChromeDriverManager().install()), options=chrome_options
-)
+driver = webdriver.Chrome(options=chrome_options)
 
 # Variables globales
 registros_fallidos = []
@@ -56,15 +57,23 @@ def cargar_ultimo_exitoso():
         return None
 
 
-def guardar_ultimo_exitoso(dte):
+def guardar_ultimo_exitoso(dte, tiene_descargas_nuevas=True):
     """
     Guarda el último DTE exitoso en el archivo JSON
     """
     archivo = os.path.join(DOWNLOAD_FOLDER, "ultimo_exitoso.json")
     try:
+        fecha_actual = datetime.now()
+        estado = (
+            "Todo actualizado - nuevas descargas"
+            if tiene_descargas_nuevas
+            else "Todo actualizado - nada nuevo"
+        )
         data = {
-            "fecha_actualizacion": datetime.now().isoformat(),
+            "ultima_ejecucion": fecha_actual.strftime("%Y-%m-%d %H:%M:%S"),
+            "fecha_actualizacion": fecha_actual.isoformat(),
             "ultimo_dte": dte,
+            "estado": estado,
         }
         with open(archivo, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -853,7 +862,18 @@ try:
     # Guardar reporte de fallidos
     guardar_reporte_fallidos()
 
-    input("\nPresiona Enter para cerrar el navegador...")
+    # Actualizar estado según si hubo descargas nuevas
+    if registros_exitosos > 0:
+        print(
+            f"\n📥 Estado: Todo actualizado - nuevas descargas ({registros_exitosos} archivos)"
+        )
+    else:
+        print(f"\nℹ️ Estado: Todo actualizado - nada nuevo")
+        # Si no hay registros nuevos, actualizar el JSON con el último conocido
+        if ultimo_dte_exitoso:
+            guardar_ultimo_exitoso(ultimo_dte_exitoso, tiene_descargas_nuevas=False)
+
+    print("\n✅ Proceso completado. El navegador se cerrará automáticamente...")
 
 except KeyboardInterrupt:
     print("\n\n⚠️ Ejecución interrumpida por el usuario")
