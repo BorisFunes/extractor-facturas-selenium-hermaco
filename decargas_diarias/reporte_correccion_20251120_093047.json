@@ -1,0 +1,12 @@
+{
+  "fecha_correccion": "2025-11-20T09:30:47.492240",
+  "total_corregidos": 1,
+  "total_aun_fallidos": 0,
+  "corregidos": [
+    {
+      "dte": "DTE-01-M001P001-000000000000270",
+      "descargado_en": "2025-11-20T09:30:45.409834"
+    }
+  ],
+  "aun_fallidos": []
+}

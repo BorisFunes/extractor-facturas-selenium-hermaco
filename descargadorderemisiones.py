@@ -234,6 +234,32 @@ def extraer_correlativo_de_fila(fila):
     return None
 
 
+def verificar_si_esta_anulada(fila):
+    """
+    Verifica si una remisión está anulada revisando:
+    1. Estado de Documento = "Anulada"
+    2. Estado de pago = "Debido (Anulada)"
+    Retorna True si está anulada, False si no lo está
+    """
+    try:
+        celdas = fila.find_elements(By.TAG_NAME, "td")
+
+        for celda in celdas:
+            texto = celda.text.strip().lower()
+
+            # Verificar si contiene "anulada" o "debido (anulada)"
+            if "anulada" in texto:
+                # Puede ser "Anulada" o "Debido (Anulada)"
+                print(f"  🚫 Remisión anulada detectada: {celda.text.strip()}")
+                return True
+
+    except Exception as e:
+        print(f"  ⚠️ Error al verificar estado de anulación: {e}")
+        return False
+
+    return False
+
+
 def click_acciones_fila(driver, fila):
     """
     Hace click en el botón de Acciones de la fila
@@ -787,6 +813,7 @@ try:
 
     ventana_principal = driver.current_window_handle
     registros_procesados_totales = 0
+    registros_anulados_ignorados = 0
 
     # Obtener todas las filas
     filas = driver.find_elements(
@@ -876,6 +903,21 @@ try:
                 continue
             fila = filas[idx]
 
+            # Verificar si la remisión está anulada
+            if verificar_si_esta_anulada(fila):
+                correlativo = extraer_correlativo_de_fila(fila)
+                print(
+                    f"  ⏭️ Remisión anulada ignorada: {correlativo if correlativo else f'registro_{idx + 1}'}"
+                )
+
+                # Guardar como último exitoso aunque se omita (para continuar el progreso)
+                if correlativo:
+                    ultimo_correlativo_exitoso = correlativo
+                    guardar_ultimo_correlativo(correlativo)
+
+                registros_anulados_ignorados += 1
+                continue
+
             # Procesar con sistema de reintentos
             exito = procesar_registro_con_reintentos(
                 driver,
@@ -909,6 +951,7 @@ try:
     print(f"🎉 PROCESAMIENTO COMPLETADO")
     print(f"{'='*60}")
     print(f"✅ Total de registros procesados: {registros_procesados_totales}")
+    print(f"🚫 Remisiones anuladas ignoradas: {registros_anulados_ignorados}")
 
     # Contar archivos finales
     pdfs_finales = len(glob.glob(os.path.join(DOWNLOAD_FOLDER, "*.pdf")))

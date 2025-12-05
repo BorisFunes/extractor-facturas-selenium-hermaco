@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime
 
 # Configuración de la carpeta de descargas
-DOWNLOAD_FOLDER = r"C:\Users\H01ventas05\Desktop\extractor-facturas-selenium-hermaco-main\descargas_diarias"
+DOWNLOAD_FOLDER = r"C:\Users\H01ventas05\Desktop\extractor-facturas-selenium-hermaco-main\descargas_anuladas"
 os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 # Configuración de Chrome para descargas automáticas
@@ -170,32 +170,6 @@ def extraer_fecha_de_fila(fila):
     except Exception:
         pass
     return None
-
-
-def verificar_si_esta_anulada(fila):
-    """
-    Verifica si una factura está anulada revisando:
-    1. Estado de Documento = "Anulada"
-    2. Estado de pago = "Debido (Anulada)"
-    Retorna True si está anulada, False si no lo está
-    """
-    try:
-        celdas = fila.find_elements(By.TAG_NAME, "td")
-
-        for celda in celdas:
-            texto = celda.text.strip().lower()
-
-            # Verificar si contiene "anulada" o "debido (anulada)"
-            if "anulada" in texto:
-                # Puede ser "Anulada" o "Debido (Anulada)"
-                print(f"  🚫 Factura anulada detectada: {celda.text.strip()}")
-                return True
-
-    except Exception as e:
-        print(f"  ⚠️ Error al verificar estado de anulación: {e}")
-        return False
-
-    return False
 
 
 def click_acciones_fila(driver, fila):
@@ -679,28 +653,79 @@ try:
     time.sleep(2)
     print("📍 Estamos en la página de facturas")
 
-    # Filtro de fecha - HOY
-    print("\n🔄 Abriendo filtro de fecha...")
-    filtro_fecha = wait.until(EC.element_to_be_clickable((By.ID, "sell_date_filter")))
-    filtro_fecha.click()
-    print("✅ Click en 'Filtrar por fecha' (desplegable abierto)")
+    # APLICAR FILTROS: 1) Estado = Anulado, 2) Fecha = Ayer, 3) Mostrar = Todos
+    print("\n" + "=" * 60)
+    print("🔧 APLICANDO FILTROS PARA FACTURAS ANULADAS DE AYER")
+    print("=" * 60)
 
-    time.sleep(2)
+    # Filtro de ESTADO - ANULADO
+    print("\n🔄 Aplicando filtro de estado 'Anulado'...")
     try:
-        hoy = wait.until(
+        # Click en el selector de estado
+        filtro_estado = wait.until(
             EC.element_to_be_clickable(
-                (
-                    By.XPATH,
-                    "//li[contains(text(), 'Hoy')] | //a[contains(text(), 'Hoy')] | //span[contains(text(), 'Hoy')]",
-                )
+                (By.XPATH, "//span[@id='select2-efactura_status-container']")
             )
         )
-        hoy.click()
-        print("✅ Seleccionado 'Hoy'")
-    except:
-        print("⚠️ No se encontró 'Hoy'. Continuando...")
+        filtro_estado.click()
+        print("✅ Click en filtro de estado (desplegable abierto)")
+        time.sleep(1)
 
-    time.sleep(3)
+        # Buscar y seleccionar "Anulado"
+        try:
+            opcion_anulado = wait.until(
+                EC.element_to_be_clickable(
+                    (
+                        By.XPATH,
+                        "//li[contains(@class, 'select2-results__option') and contains(text(), 'Anulado')]",
+                    )
+                )
+            )
+            opcion_anulado.click()
+            print("✅ Seleccionado estado 'Anulado'")
+        except:
+            # Intento alternativo
+            search_box = wait.until(
+                EC.presence_of_element_located((By.CLASS_NAME, "select2-search__field"))
+            )
+            search_box.send_keys("Anulado")
+            time.sleep(0.5)
+            search_box.send_keys(Keys.ENTER)
+            print("✅ Seleccionado estado 'Anulado' (mediante búsqueda)")
+
+        time.sleep(2)
+    except Exception as e:
+        print(f"⚠️ Error al aplicar filtro de estado: {e}")
+        print("   Continuando con la ejecución...")
+
+    # Filtro de fecha - AYER
+    print("\n🔄 Abriendo filtro de fecha...")
+    try:
+        filtro_fecha = wait.until(
+            EC.element_to_be_clickable((By.ID, "sell_date_filter"))
+        )
+        filtro_fecha.click()
+        print("✅ Click en 'Filtrar por fecha' (desplegable abierto)")
+
+        time.sleep(2)
+        try:
+            ayer = wait.until(
+                EC.element_to_be_clickable(
+                    (
+                        By.XPATH,
+                        "//li[contains(text(), 'Ayer')] | //a[contains(text(), 'Ayer')] | //span[contains(text(), 'Ayer')]",
+                    )
+                )
+            )
+            ayer.click()
+            print("✅ Seleccionado 'Ayer'")
+        except:
+            print("⚠️ No se encontró 'Ayer'. Continuando...")
+
+        time.sleep(3)
+    except Exception as e:
+        print(f"⚠️ Error al aplicar filtro de fecha: {e}")
+        print("   Continuando con la ejecución...")
 
     # Mostrar TODOS los registros
     print("\n🔄 Cambiando filtro a mostrar TODOS los registros...")
@@ -766,11 +791,18 @@ try:
         By.XPATH, "//table[@id='sell_table']//tbody/tr[@role='row']"
     )
     total_filas = len(filas)
-    print(f"\n📊 Total de registros en tabla: {total_filas}")
+    print(f"\n📊 Total de registros anulados en tabla: {total_filas}")
 
     if total_filas == 0:
-        print("⚠️ No hay registros para procesar hoy")
+        print("⚠️ No hay registros anulados para procesar de ayer")
+        print("✅ Todo actualizado - no hay facturas anuladas de ayer")
+
+        # Actualizar el JSON con el estado
+        if ultimo_dte_cargado:
+            guardar_ultimo_exitoso(ultimo_dte_cargado, tiene_descargas_nuevas=False)
+
         driver.quit()
+        print("\n👋 Navegador cerrado")
         exit(0)
 
     # Determinar desde dónde empezar
@@ -809,13 +841,12 @@ try:
 
     # Procesamiento de registros
     print("\n" + "=" * 60)
-    print("🚀 INICIANDO PROCESAMIENTO DE REGISTROS DE HOY")
+    print("🚀 INICIANDO PROCESAMIENTO DE FACTURAS ANULADAS DE AYER")
     print("=" * 60)
 
     ventana_principal = driver.current_window_handle
     registros_procesados = 0
     registros_exitosos = 0
-    registros_anulados_ignorados = 0
 
     # Procesar desde indice_inicio hacia arriba (índices menores)
     for idx in range(indice_inicio, -1, -1):
@@ -835,21 +866,6 @@ try:
                 print(f"  ⚠️ Registro {idx} ya no está disponible")
                 continue
             fila = filas[idx]
-
-            # Verificar si la factura está anulada
-            if verificar_si_esta_anulada(fila):
-                dte = extraer_dte_de_fila(fila)
-                print(
-                    f"  ⏭️ Factura anulada ignorada: {dte if dte else f'registro_{idx + 1}'}"
-                )
-
-                # Guardar como último exitoso aunque se omita (para continuar el progreso)
-                if dte:
-                    ultimo_dte_exitoso = dte
-                    guardar_ultimo_exitoso(dte)
-
-                registros_anulados_ignorados += 1
-                continue
 
             # Procesar con el flujo de modal
             exito = procesar_registro_con_modal(
@@ -916,7 +932,6 @@ try:
     print(f"📊 RESUMEN:")
     print(f"   Total de registros procesados: {registros_procesados}")
     print(f"   ✅ Registros exitosos: {registros_exitosos}")
-    print(f"   🚫 Facturas anuladas ignoradas: {registros_anulados_ignorados}")
     print(f"   ❌ Registros fallidos: {len(registros_fallidos)}")
     if ultimo_dte_exitoso:
         print(f"   🏷️ Último DTE exitoso: {ultimo_dte_exitoso}")
@@ -931,7 +946,7 @@ try:
             f"\n📥 Estado: Todo actualizado - nuevas descargas ({registros_exitosos} archivos)"
         )
     else:
-        print(f"\nℹ️ Estado: Todo actualizado - nada nuevo")
+        print(f"\nℹ️ Estado: Todo actualizado - no hay facturas anuladas nuevas de ayer")
         # Si no hay registros nuevos, actualizar el JSON con el último conocido
         if ultimo_dte_exitoso:
             guardar_ultimo_exitoso(ultimo_dte_exitoso, tiene_descargas_nuevas=False)
